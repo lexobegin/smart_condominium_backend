@@ -1,0 +1,2 @@
+# Ignorar el entorno virtual
+env/
