@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-&m3yw%@39arzffl5#)fkh79+pq3f3pgm41t(v^jy6n6s5_fgx$
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['0.0.0.0', '192.168.0.6', '192.168.0.5', '192.168.0.4']
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # origen de Vite + React
