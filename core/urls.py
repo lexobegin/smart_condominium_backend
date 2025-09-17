@@ -12,6 +12,13 @@ router.register(r'usuarios', UsuarioViewSet, basename='usuarios')
 router.register(r'condominios', CondominioViewSet, basename='condominios')
 router.register(r'unidades', UnidadHabitacionalViewSet, basename='unidades')
 
+router.register('conceptos-cobro', ConceptoCobroViewSet)
+router.register('facturas', FacturaViewSet)
+router.register('pagos', PagoViewSet)
+router.register('comunicados', ComunicadoViewSet)
+router.register('comunicado-unidades', ComunicadoUnidadViewSet)
+router.register('notificaciones', NotificacionViewSet)
+
 urlpatterns = [
     path('', include(router.urls)),
 

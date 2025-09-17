@@ -43,7 +43,7 @@ class LoginView(APIView):
 
         # Si usas JWT
         refresh = RefreshToken.for_user(user)
-        return Response({
+        """return Response({
             'access': str(refresh.access_token),
             'refresh': str(refresh),
             'usuario': {
@@ -52,8 +52,13 @@ class LoginView(APIView):
                 'apellidos': user.apellidos,
                 'email': user.email,
                 'tipo': user.tipo,
-                'roles': user.roles,
+                'roles': list(user.roles.values('id', 'nombre'))
             }
+        })"""
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'usuario': UsuarioLoginSerializer(user).data
         })
 
 class CondominioViewSet(ModelViewSet):
@@ -61,8 +66,69 @@ class CondominioViewSet(ModelViewSet):
     serializer_class = CondominioSerializer
     permission_classes = [IsAuthenticated]
 
-
 class UnidadHabitacionalViewSet(ModelViewSet):
     queryset = UnidadHabitacional.objects.all()
     serializer_class = UnidadHabitacionalSerializer
     permission_classes = [IsAuthenticated]
+
+# ===================================
+# FINANZAS
+# ===================================
+
+class ConceptoCobroViewSet(ModelViewSet):
+    queryset = ConceptoCobro.objects.all()
+    serializer_class = ConceptoCobroSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['nombre', 'tipo']
+    ordering_fields = ['monto', 'aplica_desde', 'aplica_hasta']
+
+
+class FacturaViewSet(ModelViewSet):
+    queryset = Factura.objects.all()
+    serializer_class = FacturaSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['descripcion', 'estado']
+    ordering_fields = ['fecha_emision', 'fecha_vencimiento', 'monto']
+
+
+class PagoViewSet(ModelViewSet):
+    queryset = Pago.objects.all()
+    serializer_class = PagoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['referencia_pago', 'estado', 'metodo_pago']
+    ordering_fields = ['fecha_pago', 'monto']
+
+# ===================================
+# COMUNICACIÓN
+# ===================================
+
+class ComunicadoViewSet(ModelViewSet):
+    queryset = Comunicado.objects.all()
+    serializer_class = ComunicadoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['titulo', 'contenido', 'prioridad']
+    ordering_fields = ['fecha_publicacion', 'prioridad']
+
+
+class ComunicadoUnidadViewSet(ModelViewSet):
+    queryset = ComunicadoUnidad.objects.all()
+    serializer_class = ComunicadoUnidadSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['comunicado', 'unidad_habitacional']
+
+# ===================================
+# NOTIFICACIONES
+# ===================================
+
+class NotificacionViewSet(ModelViewSet):
+    queryset = Notificacion.objects.all()
+    serializer_class = NotificacionSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['titulo', 'mensaje', 'tipo', 'prioridad']
+    ordering_fields = ['fecha_envio', 'prioridad', 'enviada', 'leida']
