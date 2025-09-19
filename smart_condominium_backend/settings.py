@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-&m3yw%@39arzffl5#)fkh79+pq3f3pgm41t(v^jy6n6s5_fgx$
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost:4200', 'api-smart-condominium-backend.duckdns.org', 'localhost', '127.0.0.1', '0.0.0.0', '192.168.0.6', '192.168.0.5', '192.168.0.4']
+ALLOWED_HOSTS = ['34.39.171.6', 'localhost:4200', 'api-smart-condominium-backend.duckdns.org', 'localhost', '127.0.0.1', '0.0.0.0', '192.168.0.6', '192.168.0.5', '192.168.0.4']
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # origen de Vite + React
@@ -219,4 +219,4 @@ class CorsMiddleware:
 
 
 # Agrega el middleware al final
-MIDDLEWARE.append('gestion_documental_backend.settings.CorsMiddleware')
+MIDDLEWARE.append('smart_condominium_backend.settings.CorsMiddleware')
