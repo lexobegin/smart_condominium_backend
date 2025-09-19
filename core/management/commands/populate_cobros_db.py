@@ -126,12 +126,25 @@ class Command(BaseCommand):
                 for unidad in unidades:
                     ComunicadoUnidad.objects.create(
                         comunicado=comunicado,
-                        unidad_habitacional=unidad,
-                        leido=random.choice([True, False])
+                        unidad_habitacional=unidad
                     )
+                    # Crear registros de lectura aleatorios para algunos usuarios de la unidad
+                    usuarios_unidad = Usuario.objects.filter(
+                        unidad_habitacional=unidad
+                    )
+                    
+                    for usuario in usuarios_unidad:
+                        # 70% de probabilidad de que el usuario haya leído el comunicado
+                        if random.random() < 0.7:
+                            ComunicadoLeido.objects.create(
+                                comunicado=comunicado,
+                                usuario=usuario
+                                # fecha_leido se crea automáticamente con auto_now_add
+                            )
 
         self.stdout.write(f"Comunicados creados: {len(self.comunicados)}")
         self.stdout.write(f"Comunicados-Unidad creados: {ComunicadoUnidad.objects.count()}")
+        self.stdout.write(f"Registros de lectura creados: {ComunicadoLeido.objects.count()}")
     
     def crear_notificaciones(self):
         tipos = ['informativa', 'advertencia', 'urgente']

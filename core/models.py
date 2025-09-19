@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.core.exceptions import ValidationError
 
 class UsuarioManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -293,7 +294,6 @@ class Comunicado(models.Model):
 class ComunicadoUnidad(models.Model):
     comunicado = models.ForeignKey('Comunicado', on_delete=models.CASCADE)
     unidad_habitacional = models.ForeignKey('UnidadHabitacional', on_delete=models.CASCADE)
-    leido = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('comunicado', 'unidad_habitacional')
@@ -301,6 +301,17 @@ class ComunicadoUnidad(models.Model):
     def __str__(self):
         return f"Comunicado #{self.comunicado_id} -> {self.unidad_habitacional}"
 
+
+class ComunicadoLeido(models.Model):
+    comunicado = models.ForeignKey('Comunicado', on_delete=models.CASCADE)
+    usuario = models.ForeignKey('Usuario', on_delete=models.CASCADE)
+    fecha_leido = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('comunicado', 'usuario')
+
+    def __str__(self):
+        return f"{self.usuario} leyó {self.comunicado} el {self.fecha_leido}"
 
 # ===================================
 # NOTIFICACIONES
@@ -340,3 +351,122 @@ class Notificacion(models.Model):
 
     def __str__(self):
         return f"{self.titulo} - {self.tipo}"
+
+
+class AreaComun(models.Model):
+    nombre = models.CharField(max_length=100)
+    descripcion = models.TextField(blank=True, null=True)
+    capacidad = models.IntegerField(blank=True, null=True)
+    horario_apertura = models.TimeField(blank=True, null=True)
+    horario_cierre = models.TimeField(blank=True, null=True)
+    precio_por_hora = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    reglas_uso = models.TextField(blank=True, null=True)
+    requiere_aprobacion = models.BooleanField(default=False)
+    condominio = models.ForeignKey('Condominio', on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.nombre
+
+class Reserva(models.Model):
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('confirmada', 'Confirmada'),
+        ('cancelada', 'Cancelada'),
+        ('completada', 'Completada'),
+    ]
+
+    area_comun = models.ForeignKey('AreaComun', on_delete=models.CASCADE)
+    usuario = models.ForeignKey('Usuario', on_delete=models.CASCADE)
+    fecha_reserva = models.DateField()
+    hora_inicio = models.TimeField()
+    hora_fin = models.TimeField()
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
+    monto_total = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    motivo = models.TextField(blank=True, null=True)
+    numero_invitados = models.IntegerField(blank=True, null=True)
+    factura = models.ForeignKey('Factura', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        if self.hora_fin <= self.hora_inicio:
+            raise ValidationError("La hora de fin debe ser mayor que la hora de inicio.")
+
+class CategoriaMantenimiento(models.Model):
+    nombre = models.CharField(max_length=100)
+    descripcion = models.TextField(blank=True, null=True)
+    condominio = models.ForeignKey('Condominio', on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.nombre
+
+class SolicitudMantenimiento(models.Model):
+    PRIORIDAD_CHOICES = [
+        ('baja', 'Baja'),
+        ('media', 'Media'),
+        ('alta', 'Alta'),
+        ('urgente', 'Urgente'),
+    ]
+
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('asignado', 'Asignado'),
+        ('en_proceso', 'En Proceso'),
+        ('completado', 'Completado'),
+        ('cancelado', 'Cancelado'),
+    ]
+
+    CREADOR_TIPO_CHOICES = [
+        ('residente', 'Residente'),
+        ('administracion', 'Administración'),
+        ('sistema', 'Sistema'),
+    ]
+
+    unidad_habitacional = models.ForeignKey('UnidadHabitacional', on_delete=models.SET_NULL, null=True, blank=True)
+    area_comun = models.ForeignKey('AreaComun', on_delete=models.SET_NULL, null=True, blank=True)
+    categoria_mantenimiento = models.ForeignKey('CategoriaMantenimiento', on_delete=models.CASCADE)
+    usuario_reporta = models.ForeignKey('Usuario', on_delete=models.CASCADE)
+    titulo = models.CharField(max_length=255)
+    descripcion = models.TextField()
+    prioridad = models.CharField(max_length=10, choices=PRIORIDAD_CHOICES, default='media')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
+    fecha_reporte = models.DateTimeField(auto_now_add=True)
+    fecha_limite = models.DateField(blank=True, null=True)
+    fecha_completado = models.DateTimeField(blank=True, null=True)
+    creador_tipo = models.CharField(max_length=20, choices=CREADOR_TIPO_CHOICES, default='residente')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class TareaMantenimiento(models.Model):
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('en_proceso', 'En Proceso'),
+        ('completado', 'Completado'),
+        ('cancelado', 'Cancelado'),
+    ]
+
+    solicitud_mantenimiento = models.ForeignKey('SolicitudMantenimiento', on_delete=models.CASCADE)
+    usuario_asignado = models.ForeignKey('Usuario', on_delete=models.SET_NULL, null=True, blank=True)
+    descripcion = models.TextField()
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
+    fecha_asignacion = models.DateTimeField(auto_now_add=True)
+    fecha_limite = models.DateField(blank=True, null=True)
+    fecha_completado = models.DateTimeField(blank=True, null=True)
+    costo_estimado = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    costo_real = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class MantenimientoPreventivo(models.Model):
+    categoria_mantenimiento = models.ForeignKey('CategoriaMantenimiento', on_delete=models.CASCADE)
+    area_comun = models.ForeignKey('AreaComun', on_delete=models.SET_NULL, null=True, blank=True)
+    descripcion = models.TextField()
+    periodicidad_dias = models.IntegerField()
+    ultima_ejecucion = models.DateField(blank=True, null=True)
+    proxima_ejecucion = models.DateField(blank=True, null=True)
+    responsable = models.ForeignKey('Usuario', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

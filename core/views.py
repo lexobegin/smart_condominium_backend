@@ -121,6 +121,18 @@ class ComunicadoUnidadViewSet(ModelViewSet):
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['comunicado', 'unidad_habitacional']
 
+class ComunicadoLeidoViewSet(viewsets.ModelViewSet):
+    queryset = ComunicadoLeido.objects.all()
+    serializer_class = ComunicadoLeidoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
+        comunicado = serializer.validated_data['comunicado']
+        usuario = self.request.user
+        if ComunicadoLeido.objects.filter(comunicado=comunicado, usuario=usuario).exists():
+            raise serializers.ValidationError("Este comunicado ya fue marcado como leído.")
+        serializer.save(usuario=usuario)
+
 # ===================================
 # NOTIFICACIONES
 # ===================================
@@ -132,3 +144,123 @@ class NotificacionViewSet(ModelViewSet):
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['titulo', 'mensaje', 'tipo', 'prioridad']
     ordering_fields = ['fecha_envio', 'prioridad', 'enviada', 'leida']
+
+
+class AreaComunViewSet(viewsets.ModelViewSet):
+    queryset = AreaComun.objects.all()
+    serializer_class = AreaComunSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # Filtrar por condominio si se proporciona
+        condominio_id = self.request.query_params.get('condominio_id')
+        if condominio_id:
+            queryset = queryset.filter(condominio_id=condominio_id)
+        return queryset
+
+class ReservaViewSet(viewsets.ModelViewSet):
+    queryset = Reserva.objects.all()
+    serializer_class = ReservaSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # Filtrar por usuario si es residente
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(usuario=self.request.user)
+        
+        # Filtros adicionales
+        area_comun_id = self.request.query_params.get('area_comun_id')
+        estado = self.request.query_params.get('estado')
+        fecha = self.request.query_params.get('fecha')
+        
+        if area_comun_id:
+            queryset = queryset.filter(area_comun_id=area_comun_id)
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        if fecha:
+            queryset = queryset.filter(fecha_reserva=fecha)
+            
+        return queryset
+
+class CategoriaMantenimientoViewSet(viewsets.ModelViewSet):
+    queryset = CategoriaMantenimiento.objects.all()
+    serializer_class = CategoriaMantenimientoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # Filtrar por condominio
+        condominio_id = self.request.query_params.get('condominio_id')
+        if condominio_id:
+            queryset = queryset.filter(condominio_id=condominio_id)
+        return queryset
+
+class SolicitudMantenimientoViewSet(viewsets.ModelViewSet):
+    queryset = SolicitudMantenimiento.objects.all()
+    serializer_class = SolicitudMantenimientoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Para residentes, solo ver sus propias solicitudes
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(usuario_reporta=self.request.user)
+        
+        # Filtros adicionales
+        estado = self.request.query_params.get('estado')
+        prioridad = self.request.query_params.get('prioridad')
+        categoria_id = self.request.query_params.get('categoria_id')
+        
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        if prioridad:
+            queryset = queryset.filter(prioridad=prioridad)
+        if categoria_id:
+            queryset = queryset.filter(categoria_mantenimiento_id=categoria_id)
+            
+        return queryset
+
+class TareaMantenimientoViewSet(viewsets.ModelViewSet):
+    queryset = TareaMantenimiento.objects.all()
+    serializer_class = TareaMantenimientoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Para técnicos, solo ver sus tareas asignadas
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(usuario_asignado=self.request.user)
+        
+        # Filtros adicionales
+        estado = self.request.query_params.get('estado')
+        solicitud_id = self.request.query_params.get('solicitud_id')
+        
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        if solicitud_id:
+            queryset = queryset.filter(solicitud_mantenimiento_id=solicitud_id)
+            
+        return queryset
+
+class MantenimientoPreventivoViewSet(viewsets.ModelViewSet):
+    queryset = MantenimientoPreventivo.objects.all()
+    serializer_class = MantenimientoPreventivoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Filtros
+        area_comun_id = self.request.query_params.get('area_comun_id')
+        categoria_id = self.request.query_params.get('categoria_id')
+        
+        if area_comun_id:
+            queryset = queryset.filter(area_comun_id=area_comun_id)
+        if categoria_id:
+            queryset = queryset.filter(categoria_mantenimiento_id=categoria_id)
+            
+        return queryset
