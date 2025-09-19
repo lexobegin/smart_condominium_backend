@@ -25,17 +25,24 @@ SECRET_KEY = 'django-insecure-&m3yw%@39arzffl5#)fkh79+pq3f3pgm41t(v^jy6n6s5_fgx$
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '192.168.0.6', '192.168.0.5', '192.168.0.4']
+ALLOWED_HOSTS = ['localhost:4200', 'api-smart-condominium-backend.duckdns.org', 'localhost', '127.0.0.1', '0.0.0.0', '192.168.0.6', '192.168.0.5', '192.168.0.4']
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # origen de Vite + React
+    "https://smart-condominium-frontend.vercel.app",
+    "http://localhost:4200",
+    "http://localhost:8000",
+    "http://192.168.0.6:4200",  # Si Angular se accede desde red local
+    "http://127.0.0.1:8100",    # Ionic o Flutter en navegador
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
 
 # Application definition
 
 INSTALLED_APPS = [
+    'corsheaders',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -43,8 +50,8 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'corsheaders',
     'core',
+    'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
 ]
 
@@ -122,7 +129,10 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGES = [
+    ('es', 'Spanish'),
+]
+LANGUAGE_CODE = 'es'
 
 TIME_ZONE = 'UTC'
 
@@ -145,8 +155,15 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+    ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,  # Cantidad de usuarios por página
+    'DEFAULT_FILTER_BACKENDS': ['rest_framework.filters.SearchFilter'],
 }
 
 from datetime import timedelta
@@ -158,3 +175,48 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': False,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
+
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+# Si usas cookies/sessions
+CSRF_TRUSTED_ORIGINS = [
+    "https://smart-condominium-frontend.vercel.app",
+    "https://api-smart-condominium-backend.duckdns.org",
+]
+
+# Middleware adicional para headers
+class CorsMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        response['Access-Control-Allow-Origin'] = 'https://smart-condominium-frontend.vercel.app'
+        response['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PUT, DELETE'
+        response['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-CSRFToken'
+        response['Access-Control-Allow-Credentials'] = 'true'
+        return response
+
+
+# Agrega el middleware al final
+MIDDLEWARE.append('gestion_documental_backend.settings.CorsMiddleware')

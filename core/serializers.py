@@ -192,6 +192,13 @@ class ComunicadoUnidadSerializer(serializers.ModelSerializer):
         model = ComunicadoUnidad
         fields = '__all__'
 
+
+class ComunicadoLeidoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ComunicadoLeido
+        fields = ['id', 'comunicado', 'usuario', 'fecha_leido']
+        read_only_fields = ['fecha_leido']
+
 # ===================================
 # NOTIFICACIONES
 # ===================================
@@ -221,3 +228,44 @@ class NotificacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notificacion
         fields = '__all__'
+
+class AreaComunSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AreaComun
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+class ReservaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Reserva
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+    def validate(self, data):
+        if data['hora_fin'] <= data['hora_inicio']:
+            raise serializers.ValidationError("La hora de fin debe ser mayor que la hora de inicio.")
+        return data
+
+class CategoriaMantenimientoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CategoriaMantenimiento
+        fields = '__all__'
+        read_only_fields = ('created_at',)
+
+class SolicitudMantenimientoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SolicitudMantenimiento
+        fields = '__all__'
+        read_only_fields = ('fecha_reporte', 'created_at', 'updated_at')
+
+class TareaMantenimientoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TareaMantenimiento
+        fields = '__all__'
+        read_only_fields = ('fecha_asignacion', 'created_at', 'updated_at')
+
+class MantenimientoPreventivoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MantenimientoPreventivo
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
