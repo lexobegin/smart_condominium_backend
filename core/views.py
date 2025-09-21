@@ -11,6 +11,10 @@ from rest_framework_simplejwt.tokens import RefreshToken  # si usas JWT
 
 from rest_framework import viewsets, filters
 
+from rest_framework.decorators import api_view, permission_classes
+from django.db.models import Prefetch
+from datetime import date, datetime, timedelta 
+
 from .serializers import *
 from .models import *
 
@@ -264,3 +268,62 @@ class MantenimientoPreventivoViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(categoria_mantenimiento_id=categoria_id)
             
         return queryset
+
+# ===================================
+# APIs PARA MOVIL
+# ===================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def consultar_cuotas_servicios(request):
+    """
+    Consulta las facturas (cuotas y servicios) del usuario autenticado
+    """
+    try:
+        usuario = request.user
+        
+        if not hasattr(usuario, 'unidad_habitacional') or not usuario.unidad_habitacional:
+            return Response(
+                {"error": "No tiene unidad habitacional asignada"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        unidad = usuario.unidad_habitacional
+        
+        # Consultar facturas de los últimos 6 meses con pre-fetch de pagos
+        hoy = date.today()
+        # Manejar correctamente el cambio de año al restar meses
+        if hoy.month > 6:
+            seis_meses_atras = hoy.replace(month=hoy.month - 6)
+        else:
+            seis_meses_atras = hoy.replace(month=12 + (hoy.month - 6), year=hoy.year - 1)
+        
+        # Pre-cargar pagos para optimizar
+        facturas = Factura.objects.filter(
+            unidad_habitacional=unidad,
+            fecha_emision__gte=seis_meses_atras
+        ).select_related(
+            'concepto_cobro', 'unidad_habitacional'
+        ).prefetch_related(
+            Prefetch('pago_set', queryset=Pago.objects.filter(estado='completado'))
+        ).order_by('-fecha_emision', '-estado')
+        
+        # Agrupar por estado para facilitar el display en móvil
+        facturas_pendientes = facturas.filter(estado__in=['pendiente', 'vencida'])
+        facturas_pagadas = facturas.filter(estado='pagada')
+        
+        # Serializar
+        serializer = FacturaSerializer(facturas, many=True)
+        
+        return Response({
+            "pendientes": FacturaSerializer(facturas_pendientes, many=True).data,
+            "pagadas": FacturaSerializer(facturas_pagadas, many=True).data,
+            "total_pendiente": float(sum(f.monto for f in facturas_pendientes)),
+            "total_pagado": float(sum(f.monto for f in facturas_pagadas))
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al consultar facturas: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
