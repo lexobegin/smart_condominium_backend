@@ -133,9 +133,25 @@ class FacturaSerializer(serializers.ModelSerializer):
 
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
 
+    # NUEVOS CAMPOS PARA LA APP MÓVIL
+    pagos = serializers.SerializerMethodField()
+    comprobante_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Factura
         fields = '__all__'
+
+    def get_pagos(self, obj):
+        """Obtiene todos los pagos relacionados con esta factura"""
+        pagos = Pago.objects.filter(factura=obj)
+        return PagoSerializer(pagos, many=True).data
+    
+    def get_comprobante_url(self, obj):
+        """Obtiene el comprobante del primer pago completado"""
+        pago_completado = Pago.objects.filter(factura=obj, estado='completado').first()
+        if pago_completado and pago_completado.comprobante:
+            return pago_completado.comprobante
+        return None
 
 
 class PagoSerializer(serializers.ModelSerializer):
