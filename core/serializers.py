@@ -1,18 +1,41 @@
 from rest_framework import serializers
 from .models import *
 
+# ===============================
+# CONDOMINIO / UNIDAD HABITACIONAL
+# ===============================
 
 class CondominioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Condominio
         fields = '__all__'
 
+
 class UnidadHabitacionalSerializer(serializers.ModelSerializer):
-    condominio = CondominioSerializer(read_only=True)
+    """
+    - Escritura: acepta 'condominio' como PrimaryKeyRelatedField (ID).
+    - Lectura: devuelve 'condominio' como objeto anidado (CondominioSerializer),
+      para no romper el front que usa u.condominio?.nombre.
+    """
+    # Para escritura: ID
+    condominio = serializers.PrimaryKeyRelatedField(
+        queryset=Condominio.objects.all()
+    )
 
     class Meta:
         model = UnidadHabitacional
         fields = '__all__'
+
+    # Para lectura: objeto anidado
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['condominio'] = CondominioSerializer(instance.condominio).data
+        return rep
+
+
+# ===============================
+# USUARIOS / ROLES / PERMISOS
+# ===============================
 
 class UsuarioSerializer(serializers.ModelSerializer):
     unidad_habitacional = UnidadHabitacionalSerializer(read_only=True)
@@ -25,6 +48,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
         model = Usuario
         exclude = ['password']
         read_only_fields = ['email', 'fecha_registro', 'is_active', 'is_staff']
+
 
 class UsuarioRegistroSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, min_length=6)
@@ -44,10 +68,12 @@ class UsuarioRegistroSerializer(serializers.ModelSerializer):
         user.save()
         return user
 
+
 class PermisoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permiso
         fields = '__all__'
+
 
 class RolSerializer(serializers.ModelSerializer):
     permisos = PermisoSerializer(many=True, source='permisos', read_only=True)
@@ -56,38 +82,24 @@ class RolSerializer(serializers.ModelSerializer):
         model = Rol
         fields = '__all__'
 
+
 class UsuarioRolSerializer(serializers.ModelSerializer):
     class Meta:
         model = UsuarioRol
         fields = ['usuario', 'rol']
+
 
 class RolPermisoSerializer(serializers.ModelSerializer):
     class Meta:
         model = RolPermiso
         fields = ['rol', 'permiso']
 
-class CondominioSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Condominio
-        fields = '__all__'
-
-class UnidadHabitacionalSerializer(serializers.ModelSerializer):
-    condominio = CondominioSerializer(read_only=True)
-    condominio_id = serializers.PrimaryKeyRelatedField(
-        queryset=Condominio.objects.all(),
-        source='condominio',
-        write_only=True
-    )
-
-    class Meta:
-        model = UnidadHabitacional
-        fields = '__all__'
 
 class RolSimpleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Rol
         fields = ['id', 'nombre']
-        
+
 
 class UsuarioLoginSerializer(serializers.ModelSerializer):
     roles = RolSimpleSerializer(many=True, read_only=True)
@@ -96,9 +108,10 @@ class UsuarioLoginSerializer(serializers.ModelSerializer):
         model = Usuario
         fields = ['id', 'nombre', 'apellidos', 'email', 'tipo', 'roles']
 
-# ===================================
+
+# ===============================
 # FINANZAS
-# ===================================
+# ===============================
 
 class ConceptoCobroSerializer(serializers.ModelSerializer):
     condominio = CondominioSerializer(read_only=True)
@@ -169,9 +182,10 @@ class PagoSerializer(serializers.ModelSerializer):
         model = Pago
         fields = '__all__'
 
-# ===================================
+
+# ===============================
 # COMUNICACIÓN
-# ===================================
+# ===============================
 
 class ComunicadoSerializer(serializers.ModelSerializer):
     autor = UsuarioSerializer(read_only=True)
@@ -215,9 +229,10 @@ class ComunicadoLeidoSerializer(serializers.ModelSerializer):
         fields = ['id', 'comunicado', 'usuario', 'fecha_leido']
         read_only_fields = ['fecha_leido']
 
-# ===================================
+
+# ===============================
 # NOTIFICACIONES
-# ===================================
+# ===============================
 
 class NotificacionSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer(read_only=True)
@@ -245,11 +260,17 @@ class NotificacionSerializer(serializers.ModelSerializer):
         model = Notificacion
         fields = '__all__'
 
+
+# ===============================
+# RESERVAS / MANTENIMIENTO
+# ===============================
+
 class AreaComunSerializer(serializers.ModelSerializer):
     class Meta:
         model = AreaComun
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
+
 
 class ReservaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -262,11 +283,13 @@ class ReservaSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("La hora de fin debe ser mayor que la hora de inicio.")
         return data
 
+
 class CategoriaMantenimientoSerializer(serializers.ModelSerializer):
     class Meta:
         model = CategoriaMantenimiento
         fields = '__all__'
         read_only_fields = ('created_at',)
+
 
 class SolicitudMantenimientoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -274,11 +297,13 @@ class SolicitudMantenimientoSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('fecha_reporte', 'created_at', 'updated_at')
 
+
 class TareaMantenimientoSerializer(serializers.ModelSerializer):
     class Meta:
         model = TareaMantenimiento
         fields = '__all__'
         read_only_fields = ('fecha_asignacion', 'created_at', 'updated_at')
+
 
 class MantenimientoPreventivoSerializer(serializers.ModelSerializer):
     class Meta:
