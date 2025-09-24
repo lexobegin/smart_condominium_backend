@@ -266,6 +266,11 @@ class NotificacionSerializer(serializers.ModelSerializer):
 # ===============================
 
 class AreaComunSerializer(serializers.ModelSerializer):
+    condominio = CondominioSerializer(read_only=True)
+    condominio_id = serializers.PrimaryKeyRelatedField(
+        queryset=Condominio.objects.all(), source='condominio', write_only=True
+    )
+
     class Meta:
         model = AreaComun
         fields = '__all__'
