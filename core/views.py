@@ -11,7 +11,7 @@ from rest_framework_simplejwt.tokens import RefreshToken  # si usas JWT
 
 from rest_framework import viewsets, filters
 
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, action
 from django.db.models import Prefetch
 from datetime import date, datetime, timedelta 
 
@@ -69,6 +69,12 @@ class CondominioViewSet(ModelViewSet):
     queryset = Condominio.objects.all()
     serializer_class = CondominioSerializer
     permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=['get'], url_path='todos')
+    def listar_todos(self, request):
+        condominios = self.get_queryset()
+        serializer = self.get_serializer(condominios, many=True)
+        return Response(serializer.data)
 
 class UnidadHabitacionalViewSet(ModelViewSet):
     queryset = UnidadHabitacional.objects.all()
