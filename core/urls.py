@@ -29,6 +29,16 @@ router.register(r'tareas-mantenimiento', TareaMantenimientoViewSet)
 router.register(r'mantenimiento-preventivo', MantenimientoPreventivoViewSet)
 router.register('pagos', PagoViewSet)
 
+# Ciclo 3
+router.register(r'vehiculos', VehiculoViewSet)
+router.register(r'registros-acceso', RegistroAccesoViewSet)
+router.register(r'visitantes', VisitanteViewSet)
+router.register(r'incidentes-seguridad', IncidenteSeguridadViewSet)
+router.register(r'bitacora', BitacoraViewSet)
+
+router.register(r'camaras-seguridad', CamaraSeguridadViewSet)
+router.register(r'usuario-unidades', UsuarioUnidadViewSet)
+
 urlpatterns = [
     path('', include(router.urls)),
 
@@ -36,6 +46,9 @@ urlpatterns = [
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('token/blacklist/', TokenBlacklistView.as_view(), name='token_blacklist'),
+
+    # Nueva ruta para gestión de unidades por usuario
+    path('usuarios/<int:usuario_id>/unidades/', gestionar_unidades_usuario, name='gestionar-unidades-usuario'),
     
     # MOVIL
     path('auth/login/', LoginView.as_view(), name='login'),
