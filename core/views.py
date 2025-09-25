@@ -157,9 +157,13 @@ class NotificacionViewSet(ModelViewSet):
 
 
 class AreaComunViewSet(viewsets.ModelViewSet):
-    queryset = AreaComun.objects.all()
+    queryset = AreaComun.objects.all().order_by('-id')
     serializer_class = AreaComunSerializer
     permission_classes = [IsAuthenticated]
+
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['nombre', 'capacidad']
 
     def get_queryset(self):
         queryset = super().get_queryset()
