@@ -3,9 +3,9 @@ from django.core.management.base import BaseCommand
 from faker import Faker
 from core.models import *
 from django.utils import timezone
+from datetime import date, timedelta
 
 fake = Faker('es_ES')
-
 
 class Command(BaseCommand):
     help = 'Pobla la base de datos con condominios, unidades, usuarios, roles y permisos'
@@ -15,12 +15,8 @@ class Command(BaseCommand):
 
         self.crear_roles_y_permisos()
         self.crear_condominios()
-        self.crear_usuarios()
-
-        """self.crear_conceptos_cobro()
-        self.crear_facturas_y_pagos()
-        self.crear_comunicados()
-        self.crear_notificaciones()"""
+        self.crear_unidades_habitacionales()
+        self.crear_usuarios_y_relaciones()
 
         self.stdout.write(self.style.SUCCESS("¡Base de datos poblada exitosamente!"))
 
@@ -53,7 +49,13 @@ class Command(BaseCommand):
 
     def crear_condominios(self):
         self.condominios = []
-        nombres = ['Condominio Las Palmas', 'Condominio Vista Mar', 'Condominio Jardines del Sur']
+        nombres = [
+            'Condominio Las Palmas', 
+            'Condominio Vista Mar', 
+            'Condominio Jardines del Sur',
+            'Condominio Altos del Norte',
+            'Condominio Valle Azul'
+        ]
 
         for nombre in nombres:
             condominio = Condominio.objects.create(
@@ -66,50 +68,126 @@ class Command(BaseCommand):
 
         self.stdout.write(f"Condominios creados: {len(self.condominios)}")
 
-    def crear_usuarios(self):
-        generos = ['M', 'F']
-        tipos_usuario = ['residente', 'propietario', 'administrador', 'seguridad', 'mantenimiento']
-        unidades_total = 0
-
+    def crear_unidades_habitacionales(self):
+        self.unidades_por_condominio = {}
+        
         for condominio in self.condominios:
-            for i in range(1, 11):  # 10 unidades por condominio
+            unidades_condominio = []
+            num_unidades = random.randint(40, 50)  # Entre 40 y 50 unidades por condominio
+            
+            for i in range(1, num_unidades + 1):
                 unidad = UnidadHabitacional.objects.create(
                     condominio=condominio,
                     codigo=f"{condominio.nombre[:3].upper()}-{i:03d}",
-                    tipo=random.choice(['departamento', 'casa']),
-                    metros_cuadrados=random.uniform(60.0, 150.0),
-                    estado=random.choice(['ocupada', 'desocupada']),
+                    tipo=random.choice(['departamento', 'casa', 'local', 'oficina']),
+                    metros_cuadrados=random.uniform(60.0, 200.0),
+                    estado=random.choice(['ocupada', 'desocupada', 'en_construccion']),
                 )
+                unidades_condominio.append(unidad)
+            
+            self.unidades_por_condominio[condominio.id] = unidades_condominio
+            self.stdout.write(f"Condominio {condominio.nombre}: {len(unidades_condominio)} unidades creadas")
 
-                # Crear propietario
-                propietario = self.crear_usuario_random(tipo='propietario', unidad=unidad)
-                unidad.propietario_actual = propietario
+    def crear_usuarios_y_relaciones(self):
+        admin_counter = 1
+        
+        for condominio in self.condominios:
+            unidades = self.unidades_por_condominio[condominio.id]
+            
+            self.stdout.write(f"\nCreando usuarios para {condominio.nombre}...")
+            
+            # 1. CREAR ADMINISTRADORES (2 por condominio)
+            for i in range(2):
+                admin = self.crear_usuario_base(
+                    tipo='administrador',
+                    email=f"admin{admin_counter}@mail.com",
+                    condominio=condominio
+                )
+                admin_counter += 1
+                self.stdout.write(f"  Administrador creado: {admin.email}")
 
-                # Crear residente si está ocupada
-                if unidad.estado == 'ocupada':
-                    residente = self.crear_usuario_random(tipo='residente', unidad=unidad)
-                    unidad.residente_actual = residente
+            # 2. CREAR PERSONAL DE SEGURIDAD (5 por condominio)
+            for i in range(5):
+                seguridad = self.crear_usuario_base(
+                    tipo='seguridad',
+                    condominio=condominio
+                )
+                self.stdout.write(f"  Seguridad creado: {seguridad.email}")
 
-                unidad.save()
-                unidades_total += 1
+            # 3. CREAR PERSONAL DE MANTENIMIENTO (10 por condominio)
+            for i in range(10):
+                mantenimiento = self.crear_usuario_base(
+                    tipo='mantenimiento',
+                    condominio=condominio
+                )
+                self.stdout.write(f"  Mantenimiento creado: {mantenimiento.email}")
 
-            # Crear un administrador por condominio
-            self.crear_usuario_random(tipo='administrador', unidad=None)
+            # 4. CREAR PROPIETARIOS Y RESIDENTES PARA UNIDADES OCUPADAS
+            unidades_ocupadas = [u for u in unidades if u.estado == 'ocupada']
+            self.stdout.write(f"  Unidades ocupadas: {len(unidades_ocupadas)}")
+            
+            for unidad in unidades_ocupadas:
+                # Crear propietario para cada unidad ocupada
+                propietario = self.crear_usuario_base(
+                    tipo='propietario',
+                    condominio=condominio
+                )
+                
+                # Crear relación propietario-unidad
+                UsuarioUnidad.objects.create(
+                    usuario=propietario,
+                    unidad=unidad,
+                    tipo_relacion='propietario',
+                    fecha_inicio=fake.date_between(start_date='-5y', end_date='today'),
+                    es_principal=True
+                )
+                
+                # Crear residentes (entre 1 y 5 por unidad)
+                num_residentes = random.randint(1, 5)
+                for i in range(num_residentes):
+                    residente = self.crear_usuario_base(
+                        tipo='residente',
+                        condominio=condominio
+                    )
+                    
+                    # Crear relación residente-unidad
+                    UsuarioUnidad.objects.create(
+                        usuario=residente,
+                        unidad=unidad,
+                        tipo_relacion='residente',
+                        fecha_inicio=fake.date_between(start_date='-2y', end_date='today'),
+                        es_principal=(i == 0)  # El primer residente es principal
+                    )
+                
+                self.stdout.write(f"  Unidad {unidad.codigo}: {num_residentes} residentes + 1 propietario")
 
-            # Crear personal de seguridad y mantenimiento
-            for _ in range(2):
-                self.crear_usuario_random(tipo='seguridad')
-                self.crear_usuario_random(tipo='mantenimiento')
+        # Estadísticas finales
+        total_usuarios = Usuario.objects.count()
+        total_unidades = UnidadHabitacional.objects.count()
+        total_relaciones = UsuarioUnidad.objects.count()
+        
+        self.stdout.write(f"\n--- ESTADÍSTICAS FINALES ---")
+        self.stdout.write(f"Total usuarios: {total_usuarios}")
+        self.stdout.write(f"Total unidades: {total_unidades}")
+        self.stdout.write(f"Total relaciones usuario-unidad: {total_relaciones}")
 
-        self.stdout.write(f"Usuarios creados: {Usuario.objects.count()}")
-        self.stdout.write(f"Unidades habitacionales creadas: {unidades_total}")
-
-    def crear_usuario_random(self, tipo, unidad=None):
+    def crear_usuario_base(self, tipo, email=None, condominio=None):
+        """Crea un usuario base con datos aleatorios"""
         nombre = fake.first_name()
         apellidos = fake.last_name()
         genero = random.choice(['M', 'F'])
         ci = fake.unique.random_number(digits=8)
-        email = f"{nombre.lower()}.{apellidos.lower()}.{random.randint(1000,9999)}@mail.com"
+        
+        if not email:
+            # Generar email único basado en nombre y apellidos
+            base_email = f"{nombre.lower()}.{apellidos.lower()}.{random.randint(1000,9999)}"
+            email = f"{base_email}@mail.com"
+            
+            # Asegurar que el email sea único
+            counter = 1
+            while Usuario.objects.filter(email=email).exists():
+                email = f"{base_email}{counter}@mail.com"
+                counter += 1
 
         usuario = Usuario.objects.create(
             email=email,
@@ -120,120 +198,34 @@ class Command(BaseCommand):
             genero=genero,
             telefono=fake.phone_number(),
             tipo=tipo,
-            unidad_habitacional=unidad if tipo in ['residente', 'propietario'] else None,
             estado='activo',
             is_active=True,
-            is_staff=True if tipo == 'administrador' else False,
+            is_staff=(tipo == 'administrador'),
         )
         usuario.set_password('12345678')
         usuario.save()
 
-        # Asignar Rol
-        rol = self.rol_objs.get(tipo.capitalize())
+        # Asignar Rol correspondiente
+        rol_nombre = tipo.capitalize()
+        rol = self.rol_objs.get(rol_nombre)
         if rol:
             UsuarioRol.objects.get_or_create(usuario=usuario, rol=rol)
 
         return usuario
-"""
-    def crear_conceptos_cobro(self):
-        tipos = ['mensual', 'extraordinario', 'servicio']
-        conceptos = ['Cuota de mantenimiento', 'Fondo de reserva', 'Reparación de ascensor', 'Limpieza general', 'Reemplazo de bombillos']
 
-        self.conceptos = []
-
-        for nombre in conceptos:
-            concepto = ConceptoCobro.objects.create(
-                nombre=nombre,
-                descripcion=fake.sentence(),
-                tipo=random.choice(tipos),
-                monto=random.uniform(20.0, 200.0),
-                aplica_desde=timezone.now().date(),
-                aplica_hasta=timezone.now().date().replace(year=timezone.now().year + 1)
-            )
-            self.conceptos.append(concepto)
-
-        self.stdout.write(f"Conceptos de cobro creados: {len(self.conceptos)}")
-
-    def crear_facturas_y_pagos(self):
-        unidades = UnidadHabitacional.objects.all()
-        estados_factura = ['pendiente', 'pagada', 'vencida']
-        estados_pago = ['aprobado', 'rechazado', 'pendiente']
-        metodos_pago = ['efectivo', 'transferencia', 'tarjeta']
-
-        self.facturas = []
-
-        for unidad in unidades:
-            for i in range(2):  # 2 facturas por unidad
-                concepto = random.choice(self.conceptos)
-                monto = concepto.monto
-                fecha_emision = fake.date_this_year()
-                fecha_vencimiento = fake.date_between(start_date=fecha_emision, end_date='+30d')
-
-                factura = Factura.objects.create(
-                    unidad_habitacional=unidad,
-                    concepto=concepto,
-                    monto=monto,
-                    descripcion=f"Factura por {concepto.nombre.lower()}",
-                    fecha_emision=fecha_emision,
-                    fecha_vencimiento=fecha_vencimiento,
-                    estado=random.choice(estados_factura)
+    def crear_camaras_seguridad(self):
+        """OPCIONAL: Crear cámaras de seguridad para cada condominio"""
+        for condominio in self.condominios:
+            tipos_camara = ['entrada_principal', 'estacionamiento', 'area_comun', 'perimetral']
+            
+            for i, tipo in enumerate(tipos_camara, 1):
+                CamaraSeguridad.objects.create(
+                    condominio=condominio,
+                    nombre=f"Cámara {tipo.replace('_', ' ').title()} {i}",
+                    ubicacion=fake.street_address(),
+                    tipo_camara=tipo,
+                    url_stream=f"rtsp://camera{condominio.id}_{i}.stream",
+                    esta_activa=random.choice([True, True, True, False])  # 75% activas
                 )
-                self.facturas.append(factura)
-
-                # Crear pago si la factura está pagada
-                if factura.estado == 'pagada':
-                    Pago.objects.create(
-                        factura=factura,
-                        monto=monto,
-                        fecha_pago=fake.date_between(start_date=fecha_emision, end_date=fecha_vencimiento),
-                        metodo_pago=random.choice(metodos_pago),
-                        referencia_pago=fake.uuid4(),
-                        estado=random.choice(estados_pago)
-                    )
-
-        self.stdout.write(f"Facturas creadas: {len(self.facturas)}")
-        self.stdout.write(f"Pagos creados: {Pago.objects.count()}")
-
-    def crear_comunicados(self):
-        prioridades = ['alta', 'media', 'baja']
-        self.comunicados = []
-
-        for i in range(10):
-            comunicado = Comunicado.objects.create(
-                titulo=fake.sentence(nb_words=6),
-                contenido=fake.paragraph(nb_sentences=3),
-                fecha_publicacion=fake.date_this_year(),
-                prioridad=random.choice(prioridades),
-            )
-            self.comunicados.append(comunicado)
-
-            # Asociar a 5 unidades aleatorias
-            unidades = random.sample(list(UnidadHabitacional.objects.all()), k=5)
-            for unidad in unidades:
-                ComunicadoUnidad.objects.create(
-                    comunicado=comunicado,
-                    unidad_habitacional=unidad,
-                    leido=random.choice([True, False])
-                )
-
-        self.stdout.write(f"Comunicados creados: {len(self.comunicados)}")
-        self.stdout.write(f"Comunicados-Unidad creados: {ComunicadoUnidad.objects.count()}")
-    
-    def crear_notificaciones(self):
-        tipos = ['informativa', 'advertencia', 'urgente']
-        prioridades = ['alta', 'media', 'baja']
-        usuarios = Usuario.objects.all()
-
-        for usuario in random.sample(list(usuarios), k=20):  # 20 notificaciones aleatorias
-            Notificacion.objects.create(
-                usuario=usuario,
-                titulo=fake.sentence(),
-                mensaje=fake.text(max_nb_chars=120),
-                tipo=random.choice(tipos),
-                prioridad=random.choice(prioridades),
-                enviada=random.choice([True, False]),
-                leida=random.choice([True, False]),
-                fecha_envio=fake.date_time_this_year()
-            )
-
-        self.stdout.write(f"Notificaciones creadas: {Notificacion.objects.count()}")"""
+        
+        self.stdout.write(f"Cámaras de seguridad creadas: {CamaraSeguridad.objects.count()}")

@@ -81,6 +81,38 @@ class UnidadHabitacionalViewSet(ModelViewSet):
     serializer_class = UnidadHabitacionalSerializer
     permission_classes = [IsAuthenticated]
 
+class UsuarioUnidadViewSet(viewsets.ModelViewSet):
+    queryset = UsuarioUnidad.objects.select_related('usuario', 'unidad', 'unidad__condominio')
+    serializer_class = UsuarioUnidadSerializer
+    permission_classes = [IsAuthenticated]
+    
+    filter_backends = [filters.SearchFilter]
+    search_fields = [
+        'usuario__nombre', 'usuario__email', 
+        'unidad__codigo', 'unidad__condominio__nombre'
+    ]
+
+# Endpoint útil para gestión de relaciones
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def gestionar_unidades_usuario(request, usuario_id=None):
+    """
+    Gestiona las unidades de un usuario específico
+    """
+    if request.method == 'GET':
+        relaciones = UsuarioUnidad.objects.filter(usuario_id=usuario_id)
+        serializer = UsuarioUnidadSerializer(relaciones, many=True)
+        return Response(serializer.data)
+    
+    elif request.method == 'POST':
+        data = request.data.copy()
+        data['usuario'] = usuario_id
+        serializer = UsuarioUnidadSerializer(data=data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 # ===================================
 # FINANZAS
 # ===================================
@@ -337,3 +369,40 @@ def consultar_cuotas_servicios(request):
             {"error": f"Error al consultar facturas: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+# ===================================
+# IA Y SEGURIDAD - VIEWS
+# ===================================
+
+class VehiculoViewSet(viewsets.ModelViewSet):
+    queryset = Vehiculo.objects.select_related('usuario')
+    serializer_class = VehiculoSerializer
+    permission_classes = [IsAuthenticated]
+
+class RegistroAccesoViewSet(viewsets.ModelViewSet):
+    queryset = RegistroAcceso.objects.select_related('usuario', 'vehiculo').order_by('-fecha_hora')
+    serializer_class = RegistroAccesoSerializer
+    permission_classes = [IsAuthenticated]
+
+class VisitanteViewSet(viewsets.ModelViewSet):
+    queryset = Visitante.objects.select_related('anfitrion').order_by('-fecha_entrada')
+    serializer_class = VisitanteSerializer
+    permission_classes = [IsAuthenticated]
+
+class IncidenteSeguridadViewSet(viewsets.ModelViewSet):
+    queryset = IncidenteSeguridad.objects.select_related('usuario_reporta', 'usuario_asignado').order_by('-fecha_hora')
+    serializer_class = IncidenteSeguridadSerializer
+    permission_classes = [IsAuthenticated]
+
+class BitacoraViewSet(viewsets.ModelViewSet):
+    queryset = Bitacora.objects.select_related('usuario').order_by('-created_at')
+    serializer_class = BitacoraSerializer
+    permission_classes = [IsAuthenticated]
+
+class CamaraSeguridadViewSet(viewsets.ModelViewSet):
+    queryset = CamaraSeguridad.objects.select_related('condominio')
+    serializer_class = CamaraSeguridadSerializer
+    permission_classes = [IsAuthenticated]
+    
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['nombre', 'ubicacion', 'tipo_camara']

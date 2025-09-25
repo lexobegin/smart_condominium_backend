@@ -51,22 +51,54 @@ class UnidadHabitacional(models.Model):
     metros_cuadrados = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='desocupada')
 
-    propietario_actual = models.ForeignKey(
-        'Usuario', on_delete=models.SET_NULL,
-        related_name='propiedades',
-        blank=True, null=True
-    )
-    residente_actual = models.ForeignKey(
-        'Usuario', on_delete=models.SET_NULL,
-        related_name='residencias',
-        blank=True, null=True
-    )
-
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.codigo} - {self.condominio.nombre}"
+    
+    # Métodos útiles para obtener relaciones actuales
+    @property
+    def propietario_actual(self):
+        """Retorna el propietario principal actual"""
+        relacion = self.usuariounidad_set.filter(
+            tipo_relacion='propietario',
+            fecha_fin__isnull=True
+        ).first()
+        return relacion.usuario if relacion else None
+
+    @property
+    def residentes_actuales(self):
+        """Retorna todos los residentes actuales"""
+        return Usuario.objects.filter(
+            usuariounidad__unidad=self,
+            usuariounidad__tipo_relacion='residente',
+            usuariounidad__fecha_fin__isnull=True
+        )
+
+# PRIMERO: Crear el modelo intermedio ANTES de modificar Usuario
+class UsuarioUnidad(models.Model):
+    TIPO_RELACION_CHOICES = [
+        ('propietario', 'Propietario'),
+        ('residente', 'Residente'),
+        ('inquilino', 'Inquilino'),
+        ('familiar', 'Familiar'),
+        ('trabajador', 'Trabajador'),
+    ]
+
+    usuario = models.ForeignKey('Usuario', on_delete=models.CASCADE)
+    unidad = models.ForeignKey('UnidadHabitacional', on_delete=models.CASCADE)
+    tipo_relacion = models.CharField(max_length=20, choices=TIPO_RELACION_CHOICES)
+    fecha_inicio = models.DateField()
+    fecha_fin = models.DateField(null=True, blank=True)
+    es_principal = models.BooleanField(default=False)  # Para identificar relación principal
+    
+    class Meta:
+        unique_together = ('usuario', 'unidad', 'tipo_relacion')
+        db_table = 'usuario_unidad'
+
+    def __str__(self):
+        return f"{self.usuario} - {self.unidad} ({self.get_tipo_relacion_display()})"
 
 class Usuario(AbstractBaseUser, PermissionsMixin):
     TIPO_CHOICES = [
@@ -85,9 +117,12 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     GENERO_CHOICES = [('M', 'Masculino'), ('F', 'Femenino')]
 
-    unidad_habitacional = models.ForeignKey(
-        UnidadHabitacional, on_delete=models.SET_NULL,
-        blank=True, null=True
+    # Relación muchos-a-muchos:
+    unidades_habitacionales = models.ManyToManyField(
+        'UnidadHabitacional', 
+        through='UsuarioUnidad',
+        through_fields=('usuario', 'unidad'),
+        related_name='usuarios'
     )
 
     tipo = models.CharField(max_length=20, choices=TIPO_CHOICES)
@@ -470,3 +505,200 @@ class MantenimientoPreventivo(models.Model):
     responsable = models.ForeignKey('Usuario', on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+# ===================================
+# SEGURIDAD CON IA - MODELOS FALTANTES
+# ===================================
+
+class Vehiculo(models.Model):
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE)
+    placa = models.CharField(max_length=20, unique=True)
+    marca = models.CharField(max_length=50, blank=True, null=True)
+    modelo = models.CharField(max_length=50, blank=True, null=True)
+    color = models.CharField(max_length=30, blank=True, null=True)
+    autorizado = models.BooleanField(default=True)
+    datos_ocr = models.TextField(blank=True, null=True)  # Datos extraídos por OCR
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.placa} - {self.usuario.nombre}"
+
+
+class RegistroAcceso(models.Model):
+    TIPO_CHOICES = [
+        ('peatonal', 'Peatonal'),
+        ('vehicular', 'Vehicular'),
+    ]
+    
+    DIRECCION_CHOICES = [
+        ('entrada', 'Entrada'),
+        ('salida', 'Salida'),
+    ]
+    
+    METODO_CHOICES = [
+        ('facial', 'Reconocimiento Facial'),
+        ('tarjeta', 'Tarjeta'),
+        ('manual', 'Manual'),
+        ('placa', 'Lectura de Placa'),
+    ]
+
+    usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True)
+    tipo = models.CharField(max_length=20, choices=TIPO_CHOICES)
+    vehiculo = models.ForeignKey(Vehiculo, on_delete=models.SET_NULL, null=True, blank=True)
+    direccion = models.CharField(max_length=10, choices=DIRECCION_CHOICES)
+    metodo = models.CharField(max_length=20, choices=METODO_CHOICES)
+    fecha_hora = models.DateTimeField(auto_now_add=True)
+    foto_evidencia = models.TextField(blank=True, null=True)
+    reconocimiento_exitoso = models.BooleanField(default=False)
+    confidence_score = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.get_direccion_display()} - {self.get_metodo_display()} - {self.fecha_hora}"
+
+
+class Visitante(models.Model):
+    nombre = models.CharField(max_length=255)
+    documento_identidad = models.CharField(max_length=50, blank=True, null=True)
+    telefono = models.CharField(max_length=20, blank=True, null=True)
+    motivo_visita = models.TextField(blank=True, null=True)
+    anfitrion = models.ForeignKey(Usuario, on_delete=models.CASCADE)
+    fecha_entrada = models.DateTimeField(auto_now_add=True)
+    fecha_salida = models.DateTimeField(null=True, blank=True)
+    foto_entrada = models.TextField(blank=True, null=True)
+    foto_salida = models.TextField(blank=True, null=True)
+    placa_vehiculo = models.CharField(max_length=20, blank=True, null=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.nombre} - {self.anfitrion.nombre}"
+
+
+class IncidenteSeguridad(models.Model):
+    TIPO_CHOICES = [
+        ('persona_no_autorizada', 'Persona No Autorizada'),
+        ('vehiculo_no_autorizado', 'Vehículo No Autorizado'),
+        ('comportamiento_sospechoso', 'Comportamiento Sospechoso'),
+        ('acceso_no_autorizado', 'Acceso No Autorizado'),
+        ('mascota_suelta', 'Mascota Suelta'),
+        ('vehiculo_mal_estacionado', 'Vehículo Mal Estacionado'),
+        ('zona_restringida', 'Zona Restringida'),
+    ]
+    
+    GRAVEDAD_CHOICES = [
+        ('baja', 'Baja'),
+        ('media', 'Media'),
+        ('alta', 'Alta'),
+        ('critica', 'Crítica'),
+    ]
+    
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('investigando', 'Investigando'),
+        ('resuelto', 'Resuelto'),
+        ('falso_positivo', 'Falso Positivo'),
+    ]
+
+    tipo = models.CharField(max_length=50, choices=TIPO_CHOICES)
+    descripcion = models.TextField()
+    ubicacion = models.CharField(max_length=255, blank=True, null=True)
+    fecha_hora = models.DateTimeField(auto_now_add=True)
+    gravedad = models.CharField(max_length=10, choices=GRAVEDAD_CHOICES, default='media')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
+    evidencia_foto = models.TextField(blank=True, null=True)
+    evidencia_video = models.TextField(blank=True, null=True)
+    confidence_score = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    usuario_reporta = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidentes_reportados')
+    usuario_asignado = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='incidentes_asignados')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} - {self.fecha_hora}"
+
+"""
+class ModeloIA(models.Model):
+    ESTADO_CHOICES = [
+        ('activo', 'Activo'),
+        ('inactivo', 'Inactivo'),
+        ('entrenando', 'Entrenando'),
+        ('error', 'Error'),
+    ]
+
+    nombre = models.CharField(max_length=100)
+    version = models.CharField(max_length=50)
+    descripcion = models.TextField(blank=True, null=True)
+    precision = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    fecha_entrenamiento = models.DateField(null=True, blank=True)
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='inactivo')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.nombre} v{self.version}"
+
+class PrediccionMorosidad(models.Model):
+    unidad_habitacional = models.ForeignKey(UnidadHabitacional, on_delete=models.CASCADE)
+    modelo_ia = models.ForeignKey(ModeloIA, on_delete=models.CASCADE)
+    score_morosidad = models.DecimalField(max_digits=5, decimal_places=4)
+    fecha_prediccion = models.DateField()
+    periodo_predicho = models.DateField()  # Mes/Año predicho (usar día 01)
+    variables_utilizadas = models.TextField(blank=True, null=True)  # JSON como TEXT
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Predicción {self.unidad_habitacional} - {self.score_morosidad}"
+
+class ConfiguracionSistema(models.Model):
+    clave = models.CharField(max_length=100, unique=True)
+    valor = models.TextField(blank=True, null=True)
+    descripcion = models.TextField(blank=True, null=True)
+    condominio = models.ForeignKey(Condominio, on_delete=models.CASCADE)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.clave} - {self.condominio.nombre}"
+"""
+
+class Bitacora(models.Model):  # Nombre simplificado como solicitaste
+    usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True)
+    accion = models.CharField(max_length=100)
+    modulo = models.CharField(max_length=50)
+    detalles = models.TextField(blank=True, null=True)
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    user_agent = models.TextField(blank=True, null=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        usuario_nombre = self.usuario.nombre if self.usuario else "Sistema"
+        return f"{usuario_nombre} - {self.accion} - {self.created_at}"
+
+class CamaraSeguridad(models.Model):
+    condominio = models.ForeignKey(Condominio, on_delete=models.CASCADE)
+    nombre = models.CharField(max_length=100)
+    ubicacion = models.CharField(max_length=255)
+    url_stream = models.URLField(blank=True, null=True)
+    tipo_camara = models.CharField(max_length=50, choices=[
+        ('entrada_principal', 'Entrada Principal'),
+        ('estacionamiento', 'Estacionamiento'),
+        ('area_comun', 'Área Común'),
+        ('perimetral', 'Perimetral')
+    ], default='area_comun')
+    esta_activa = models.BooleanField(default=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.nombre} - {self.condominio.nombre}"
