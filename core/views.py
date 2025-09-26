@@ -18,6 +18,13 @@ from datetime import date, datetime, timedelta
 from .serializers import *
 from .models import *
 
+# -------------------------------------------------------------------
+# Helper para obtener IP del cliente
+def get_client_ip(request):
+    xff = request.META.get("HTTP_X_FORWARDED_FOR")
+    return xff.split(",")[0].strip() if xff else request.META.get("REMOTE_ADDR")
+# -------------------------------------------------------------------
+
 class UsuarioViewSet(ModelViewSet):
     queryset = Usuario.objects.all().order_by('-id')
     permission_classes = [IsAuthenticated]
@@ -47,18 +54,21 @@ class LoginView(APIView):
 
         # Si usas JWT
         refresh = RefreshToken.for_user(user)
-        """return Response({
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-            'usuario': {
-                'id': user.id,
-                'nombre': user.nombre,
-                'apellidos': user.apellidos,
-                'email': user.email,
-                'tipo': user.tipo,
-                'roles': list(user.roles.values('id', 'nombre'))
-            }
-        })"""
+
+        # >>> Registro en Bitácora (login exitoso) <<<
+        try:
+            Bitacora.objects.create(
+                usuario=user,
+                accion="login_exitoso",
+                modulo="Autenticación",
+                detalles="Inicio de sesión vía /auth/login",
+                ip_address=get_client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT", "")
+            )
+        except Exception:
+            # No rompemos el login si por alguna razón falla la bitácora
+            pass
+
         return Response({
             'access': str(refresh.access_token),
             'refresh': str(refresh),
@@ -399,6 +409,15 @@ class BitacoraViewSet(viewsets.ModelViewSet):
     serializer_class = BitacoraSerializer
     permission_classes = [IsAuthenticated]
 
+    # Habilitamos búsqueda y ordenación para el front (?search=&ordering=)
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = [
+        'usuario__email', 'usuario__nombre', 'usuario__apellidos',
+        'accion', 'modulo', 'detalles'
+    ]
+    ordering_fields = ['id', 'created_at']
+    ordering = ['-created_at']
+
 class CamaraSeguridadViewSet(viewsets.ModelViewSet):
     queryset = CamaraSeguridad.objects.select_related('condominio')
     serializer_class = CamaraSeguridadSerializer
@@ -406,3 +425,35 @@ class CamaraSeguridadViewSet(viewsets.ModelViewSet):
     
     filter_backends = [filters.SearchFilter]
     search_fields = ['nombre', 'ubicacion', 'tipo_camara']
+
+# ===================================
+# Logout (JWT) - registra en Bitácora
+# ===================================
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # Si mandas refresh desde el front, intentamos ponerlo en blacklist (opcional)
+        refresh = request.data.get("refresh")
+        if refresh:
+            try:
+                RefreshToken(refresh).blacklist()
+            except Exception:
+                # No interrumpimos el flujo si falla el blacklist
+                pass
+
+        # Registrar en Bitácora
+        try:
+            Bitacora.objects.create(
+                usuario=request.user,
+                accion="logout",
+                modulo="Autenticación",
+                detalles="Cierre de sesión",
+                ip_address=get_client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT", "")
+            )
+        except Exception:
+            pass
+
+        return Response(status=status.HTTP_205_RESET_CONTENT)

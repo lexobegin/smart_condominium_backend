@@ -1,6 +1,8 @@
+# core_url.py
+
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import *
+from .views import *  # Incluye LoginView y (nuevo) LogoutView
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -42,7 +44,7 @@ router.register(r'usuario-unidades', UsuarioUnidadViewSet)
 urlpatterns = [
     path('', include(router.urls)),
 
-    # Endpoints de autenticación JWT
+    # Endpoints de autenticación JWT (se mantienen)
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('token/blacklist/', TokenBlacklistView.as_view(), name='token_blacklist'),
@@ -50,7 +52,9 @@ urlpatterns = [
     # Nueva ruta para gestión de unidades por usuario
     path('usuarios/<int:usuario_id>/unidades/', gestionar_unidades_usuario, name='gestionar-unidades-usuario'),
     
-    # MOVIL
+    # MÓVIL (se mantiene)
     path('auth/login/', LoginView.as_view(), name='login'),
-    path('cuotas-servicios/', consultar_cuotas_servicios, name='movil_consultar_cuotas'),
+
+    # NUEVO: logout (registra en Bitácora)
+    path('auth/logout/', LogoutView.as_view(), name='logout'),
 ]
