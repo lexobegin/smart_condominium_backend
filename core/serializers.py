@@ -32,13 +32,74 @@ class UnidadHabitacionalSerializer(serializers.ModelSerializer):
         rep['condominio'] = CondominioSerializer(instance.condominio).data
         return rep
 
+# ===============================
+# SERIALIZERS BÁSICOS (Evitar dependencias circulares)
+# ===============================
+
+class UsuarioBasicoSerializer(serializers.ModelSerializer):
+    """Serializer básico para Usuario (sin relaciones complejas)"""
+    tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
+    
+    class Meta:
+        model = Usuario
+        fields = ['id', 'nombre', 'apellidos', 'email', 'tipo', 'tipo_display', 'telefono', 'foto_perfil']
+
+class UnidadBasicaSerializer(serializers.ModelSerializer):
+    """Serializer básico para UnidadHabitacional"""
+    condominio_nombre = serializers.CharField(source='condominio.nombre', read_only=True)
+    tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    
+    class Meta:
+        model = UnidadHabitacional
+        fields = ['id', 'codigo', 'tipo', 'tipo_display', 'estado', 'estado_display', 'metros_cuadrados', 'condominio_nombre']
+
+class CondominioBasicoSerializer(serializers.ModelSerializer):
+    """Serializer básico para Condominio"""
+    class Meta:
+        model = Condominio
+        fields = ['id', 'nombre', 'direccion', 'telefono', 'email']
 
 # ===============================
 # USUARIOS / ROLES / PERMISOS
 # ===============================
 
+# ===============================
+# RELACIÓN USUARIO-UNIDAD
+# ===============================
+
+class UsuarioUnidadSerializer(serializers.ModelSerializer):
+    usuario = UsuarioBasicoSerializer(read_only=True)
+    unidad = UnidadBasicaSerializer(read_only=True)
+    tipo_relacion_display = serializers.CharField(source='get_tipo_relacion_display', read_only=True)
+    
+    # Campos para escritura (IDs)
+    usuario_id = serializers.PrimaryKeyRelatedField(
+        queryset=Usuario.objects.all(), 
+        source='usuario', 
+        write_only=True
+    )
+    unidad_id = serializers.PrimaryKeyRelatedField(
+        queryset=UnidadHabitacional.objects.all(), 
+        source='unidad', 
+        write_only=True
+    )
+    
+    class Meta:
+        model = UsuarioUnidad
+        fields = [
+            'id', 'usuario', 'unidad', 'tipo_relacion', 'tipo_relacion_display',
+            'fecha_inicio', 'fecha_fin', 'es_principal',
+            'usuario_id', 'unidad_id'  # Campos de escritura
+        ]
+        read_only_fields = ['id']
+
+
 class UsuarioSerializer(serializers.ModelSerializer):
-    unidad_habitacional = UnidadHabitacionalSerializer(read_only=True)
+    # Relaciones usando serializers básicos
+    relaciones_unidades = UsuarioUnidadSerializer(source='usuariounidad_set', many=True, read_only=True)
+    unidades_habitacionales = UnidadBasicaSerializer(many=True, read_only=True)
+
     genero_display = serializers.CharField(source='get_genero_display', read_only=True)
     tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
     roles = serializers.StringRelatedField(many=True, read_only=True)
@@ -49,7 +110,6 @@ class UsuarioSerializer(serializers.ModelSerializer):
         exclude = ['password']
         read_only_fields = ['email', 'fecha_registro', 'is_active', 'is_staff']
 
-
 class UsuarioRegistroSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, min_length=6)
 
@@ -57,8 +117,7 @@ class UsuarioRegistroSerializer(serializers.ModelSerializer):
         model = Usuario
         fields = [
             'email', 'password', 'nombre', 'apellidos', 'ci',
-            'fecha_nacimiento', 'genero', 'telefono',
-            'unidad_habitacional', 'tipo'
+            'fecha_nacimiento', 'genero', 'telefono', 'tipo'
         ]
 
     def create(self, validated_data):
@@ -315,3 +374,81 @@ class MantenimientoPreventivoSerializer(serializers.ModelSerializer):
         model = MantenimientoPreventivo
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
+
+
+# ===================================
+# IA Y SEGURIDAD - SERIALIZERS
+# ===================================
+
+class VehiculoSerializer(serializers.ModelSerializer):
+    usuario = UsuarioSerializer(read_only=True)
+    
+    class Meta:
+        model = Vehiculo
+        fields = '__all__'
+
+class RegistroAccesoSerializer(serializers.ModelSerializer):
+    usuario = UsuarioSerializer(read_only=True)
+    vehiculo = VehiculoSerializer(read_only=True)
+    
+    class Meta:
+        model = RegistroAcceso
+        fields = '__all__'
+
+class VisitanteSerializer(serializers.ModelSerializer):
+    anfitrion = UsuarioSerializer(read_only=True)
+    
+    class Meta:
+        model = Visitante
+        fields = '__all__'
+
+class IncidenteSeguridadSerializer(serializers.ModelSerializer):
+    usuario_reporta = UsuarioSerializer(read_only=True)
+    usuario_asignado = UsuarioSerializer(read_only=True)
+    
+    class Meta:
+        model = IncidenteSeguridad
+        fields = '__all__'
+
+
+class BitacoraSerializer(serializers.ModelSerializer):
+    usuario = UsuarioSerializer(read_only=True)
+    
+    class Meta:
+        model = Bitacora
+        fields = '__all__'
+
+class CamaraSeguridadSerializer(serializers.ModelSerializer):
+    condominio = CondominioBasicoSerializer(read_only=True)
+    condominio_id = serializers.PrimaryKeyRelatedField(
+        queryset=Condominio.objects.all(),
+        source='condominio',
+        write_only=True
+    )
+    tipo_camara_display = serializers.CharField(source='get_tipo_camara_display', read_only=True)
+    
+    class Meta:
+        model = CamaraSeguridad
+        fields = '__all__'
+
+"""
+class ModeloIASerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ModeloIA
+        fields = '__all__'
+
+class PrediccionMorosidadSerializer(serializers.ModelSerializer):
+    unidad_habitacional = UnidadHabitacionalSerializer(read_only=True)
+    modelo_ia = ModeloIASerializer(read_only=True)
+    
+    class Meta:
+        model = PrediccionMorosidad
+        fields = '__all__'
+
+class ConfiguracionSistemaSerializer(serializers.ModelSerializer):
+    condominio = CondominioSerializer(read_only=True)
+    
+    class Meta:
+        model = ConfiguracionSistema
+        fields = '__all__'
+"""
