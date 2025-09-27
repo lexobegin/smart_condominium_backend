@@ -50,7 +50,27 @@ urlpatterns = [
     # Nueva ruta para gestión de unidades por usuario
     path('usuarios/<int:usuario_id>/unidades/', gestionar_unidades_usuario, name='gestionar-unidades-usuario'),
     
-    # MOVIL
+    # MOVIL - Endpoints
     path('auth/login/', LoginView.as_view(), name='login'),
-    path('cuotas-servicios/', consultar_cuotas_servicios, name='movil_consultar_cuotas'),
+    path('movil/dashboard/', dashboard_movil, name='movil_dashboard'),
+
+    path('movil/cuotas-servicios/', consultar_cuotas_servicios, name='movil_consultar_cuotas'),
+    
+    path('movil/comunicados/<int:comunicado_id>/leer/', marcar_comunicado_leido, name='marcar_comunicado_leido'),
+    path('movil/notificaciones/<int:notificacion_id>/leer/', marcar_notificacion_leida, name='marcar_notificacion_leida'),
+
+    # COMUNICADOS MÓVIL
+    path('movil/comunicados/', listar_comunicados_movil, name='movil_comunicados_lista'),
+    path('movil/comunicados/<int:comunicado_id>/', detalle_comunicado_movil, name='movil_comunicados_detalle'),
+    path('movil/comunicados/<int:comunicado_id>/confirmar/', confirmar_lectura_obligatoria, name='movil_comunicados_confirmar'),
+    path('movil/comunicados/resumen/', resumen_comunicados_movil, name='movil_comunicados_resumen'),
+
+    # NOTIFICACIONES MÓVIL
+    path('movil/notificaciones/', listar_notificaciones_movil, name='movil_notificaciones_lista'),
+    path('movil/notificaciones/<int:notificacion_id>/', detalle_notificacion_movil, name='movil_notificaciones_detalle'),
+    path('movil/notificaciones/<int:notificacion_id>/leer/', marcar_notificacion_leida, name='movil_notificaciones_leer'),
+    path('movil/notificaciones/leer-todas/', marcar_todas_leidas, name='movil_notificaciones_leer_todas'),
+    path('movil/notificaciones/actualizar-token/', actualizar_token_notificacion, name='movil_notificaciones_actualizar_token'),
+    path('movil/notificaciones/resumen/', resumen_notificaciones_movil, name='movil_notificaciones_resumen'),
+
 ]

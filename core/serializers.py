@@ -205,29 +205,12 @@ class FacturaSerializer(serializers.ModelSerializer):
 
     estado_display = serializers.CharField(source='get_estado_display', read_only=True)
 
-    # NUEVOS CAMPOS PARA LA APP MÓVIL
-    pagos = serializers.SerializerMethodField()
-    comprobante_url = serializers.SerializerMethodField()
-
     class Meta:
         model = Factura
         fields = '__all__'
 
-    def get_pagos(self, obj):
-        """Obtiene todos los pagos relacionados con esta factura"""
-        pagos = Pago.objects.filter(factura=obj)
-        return PagoSerializer(pagos, many=True).data
-    
-    def get_comprobante_url(self, obj):
-        """Obtiene el comprobante del primer pago completado"""
-        pago_completado = Pago.objects.filter(factura=obj, estado='completado').first()
-        if pago_completado and pago_completado.comprobante:
-            return pago_completado.comprobante
-        return None
-
-
 class PagoSerializer(serializers.ModelSerializer):
-    factura = FacturaSerializer(read_only=True)
+    # Para uso general (sin incluir en FacturaSerializer)
     factura_id = serializers.PrimaryKeyRelatedField(
         queryset=Factura.objects.all(),
         source='factura',
@@ -431,24 +414,43 @@ class CamaraSeguridadSerializer(serializers.ModelSerializer):
         model = CamaraSeguridad
         fields = '__all__'
 
-"""
-class ModeloIASerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ModeloIA
-        fields = '__all__'
+# ===============================
+# SERIALIZERS ESPECÍFICOS PARA MÓVIL
+# ===============================
 
-class PrediccionMorosidadSerializer(serializers.ModelSerializer):
-    unidad_habitacional = UnidadHabitacionalSerializer(read_only=True)
-    modelo_ia = ModeloIASerializer(read_only=True)
+class UnidadMovilSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para móvil - evita recursión"""
+    condominio_nombre = serializers.CharField(source='condominio.nombre', read_only=True)
     
     class Meta:
-        model = PrediccionMorosidad
-        fields = '__all__'
+        model = UnidadHabitacional
+        fields = ['id', 'codigo', 'tipo', 'estado', 'condominio_nombre']
 
-class ConfiguracionSistemaSerializer(serializers.ModelSerializer):
-    condominio = CondominioSerializer(read_only=True)
+class ConceptoCobroMovilSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para móvil"""
+    class Meta:
+        model = ConceptoCobro
+        fields = ['id', 'nombre', 'tipo', 'monto']
+
+class FacturaMovilSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para facturas en móvil - EVITA RECURSIÓN"""
+    unidad_habitacional = UnidadMovilSerializer(read_only=True)
+    concepto_cobro = ConceptoCobroMovilSerializer(read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    
+    # Eliminar los campos de escritura que pueden causar problemas
+    class Meta:
+        model = Factura
+        fields = [
+            'id', 'unidad_habitacional', 'concepto_cobro', 'monto', 
+            'fecha_emision', 'fecha_vencimiento', 'estado', 'estado_display',
+            'descripcion', 'periodo'
+        ]
+
+class PagoMovilSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para pagos en móvil"""
+    metodo_pago_display = serializers.CharField(source='get_metodo_pago_display', read_only=True)
     
     class Meta:
-        model = ConfiguracionSistema
-        fields = '__all__'
-"""
+        model = Pago
+        fields = ['id', 'monto', 'metodo_pago', 'metodo_pago_display', 'fecha_pago', 'estado', 'comprobante']

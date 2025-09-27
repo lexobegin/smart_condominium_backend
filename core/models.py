@@ -262,7 +262,6 @@ class Factura(models.Model):
     def __str__(self):
         return f"Factura #{self.id} - {self.unidad_habitacional}"
 
-
 class Pago(models.Model):
     METODO_PAGO_CHOICES = [
         ('tarjeta', 'Tarjeta'),
@@ -335,7 +334,6 @@ class ComunicadoUnidad(models.Model):
 
     def __str__(self):
         return f"Comunicado #{self.comunicado_id} -> {self.unidad_habitacional}"
-
 
 class ComunicadoLeido(models.Model):
     comunicado = models.ForeignKey('Comunicado', on_delete=models.CASCADE)
