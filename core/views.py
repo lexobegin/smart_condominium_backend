@@ -21,7 +21,63 @@ from rest_framework.pagination import PageNumberPagination
 from .serializers import *
 from .models import *
 
-class UsuarioViewSet(ModelViewSet):
+# -------------------------------------------------------------------
+# Helper para obtener IP del cliente
+def get_client_ip(request):
+    xff = request.META.get("HTTP_X_FORWARDED_FOR")
+    return xff.split(",")[0].strip() if xff else request.META.get("REMOTE_ADDR")
+
+# Helper para formar un texto amigable de la entidad
+def display_obj(obj):
+    # intenta campos comunes
+    for attr in ("nombre", "titulo", "codigo", "descripcion"):
+        if hasattr(obj, attr):
+            val = getattr(obj, attr)
+            if val:
+                return str(val)
+    # fallback por id
+    if hasattr(obj, "id"):
+        return f"ID {obj.id}"
+    return str(obj)
+
+# Helper central para registrar en Bitácora
+def log_bitacora(request, accion, modulo, detalles=""):
+    try:
+        Bitacora.objects.create(
+            usuario=getattr(request, "user", None),
+            accion=str(accion),
+            modulo=str(modulo),
+            detalles=str(detalles),
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", "")
+        )
+    except Exception:
+        # nunca rompemos el flujo por fallar la bitácora
+        pass
+# -------------------------------------------------------------------
+
+# Mixin reutilizable para CRUD (create/update/destroy)
+class BitacoraCRUDMixin:
+    bitacora_modulo = "General"
+
+    def perform_create(self, serializer):
+        obj = serializer.save()
+        detalles = f"Creó {display_obj(obj)} (id={getattr(obj, 'id', '-')})"
+        log_bitacora(self.request, "crear", self.bitacora_modulo, detalles)
+
+    def perform_update(self, serializer):
+        obj = serializer.save()
+        detalles = f"Editó {display_obj(obj)} (id={getattr(obj, 'id', '-')})"
+        log_bitacora(self.request, "editar", self.bitacora_modulo, detalles)
+
+    def perform_destroy(self, instance):
+        detalles = f"Eliminó {display_obj(instance)} (id={getattr(instance, 'id', '-')})"
+        log_bitacora(self.request, "eliminar", self.bitacora_modulo, detalles)
+        instance.delete()
+# -------------------------------------------------------------------
+
+class UsuarioViewSet(BitacoraCRUDMixin, ModelViewSet):
+    bitacora_modulo = "Usuarios"
     queryset = Usuario.objects.all().order_by('-id')
     permission_classes = [IsAuthenticated]
 
@@ -50,25 +106,18 @@ class LoginView(APIView):
 
         # Si usas JWT
         refresh = RefreshToken.for_user(user)
-        """return Response({
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-            'usuario': {
-                'id': user.id,
-                'nombre': user.nombre,
-                'apellidos': user.apellidos,
-                'email': user.email,
-                'tipo': user.tipo,
-                'roles': list(user.roles.values('id', 'nombre'))
-            }
-        })"""
+
+        # >>> Registro en Bitácora (login exitoso) <<<
+        log_bitacora(request, "login_exitoso", "Autenticación", "Inicio de sesión vía /auth/login")
+
         return Response({
             'access': str(refresh.access_token),
             'refresh': str(refresh),
             'usuario': UsuarioLoginSerializer(user).data
         })
 
-class CondominioViewSet(ModelViewSet):
+class CondominioViewSet(BitacoraCRUDMixin, ModelViewSet):
+    bitacora_modulo = "Condominios"
     queryset = Condominio.objects.all()
     serializer_class = CondominioSerializer
     permission_classes = [IsAuthenticated]
@@ -79,7 +128,8 @@ class CondominioViewSet(ModelViewSet):
         serializer = self.get_serializer(condominios, many=True)
         return Response(serializer.data)
 
-class UnidadHabitacionalViewSet(ModelViewSet):
+class UnidadHabitacionalViewSet(BitacoraCRUDMixin, ModelViewSet):
+    bitacora_modulo = "Unidades"
     queryset = UnidadHabitacional.objects.all()
     serializer_class = UnidadHabitacionalSerializer
     permission_classes = [IsAuthenticated]
@@ -188,10 +238,11 @@ class NotificacionViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['titulo', 'mensaje', 'tipo', 'prioridad']
-    ordering_fields = ['fecha_envio', 'prioridad', 'enviada', 'leida']
+    ordering_fields = ['fecha_envio', 'prioridad', 'enviada', 'es_leida']
 
 
-class AreaComunViewSet(viewsets.ModelViewSet):
+class AreaComunViewSet(BitacoraCRUDMixin, viewsets.ModelViewSet):
+    bitacora_modulo = "Áreas Comunes"
     queryset = AreaComun.objects.all().order_by('-id')
     serializer_class = AreaComunSerializer
     permission_classes = [IsAuthenticated]
@@ -234,9 +285,13 @@ class ReservaViewSet(viewsets.ModelViewSet):
         return queryset
 
 class CategoriaMantenimientoViewSet(viewsets.ModelViewSet):
-    queryset = CategoriaMantenimiento.objects.all()
+    queryset = CategoriaMantenimiento.objects.all().order_by('-id')
     serializer_class = CategoriaMantenimientoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['nombre', 'descripcion']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -250,6 +305,10 @@ class SolicitudMantenimientoViewSet(viewsets.ModelViewSet):
     queryset = SolicitudMantenimiento.objects.all()
     serializer_class = SolicitudMantenimientoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['titulo', 'descripcion', 'prioridad','estado']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -276,6 +335,10 @@ class TareaMantenimientoViewSet(viewsets.ModelViewSet):
     queryset = TareaMantenimiento.objects.all()
     serializer_class = TareaMantenimientoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['fecha_asignacion', 'fecha_completado', 'estado', 'solicitud_mantenimiento__titulo', 'usuario_asignado__nombre']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -299,6 +362,10 @@ class MantenimientoPreventivoViewSet(viewsets.ModelViewSet):
     queryset = MantenimientoPreventivo.objects.all()
     serializer_class = MantenimientoPreventivoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['descripcion', 'periodicidad_dias', 'ultima_ejecucion', 'proxima_ejecucion', 'categoria_mantenimiento__nombre', 'responsable__nombre', 'area_comun__nombre']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -343,6 +410,15 @@ class BitacoraViewSet(viewsets.ModelViewSet):
     serializer_class = BitacoraSerializer
     permission_classes = [IsAuthenticated]
 
+    # Habilitamos búsqueda y ordenación para el front (?search=&ordering=)
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = [
+        'usuario__email', 'usuario__nombre', 'usuario__apellidos',
+        'accion', 'modulo', 'detalles'
+    ]
+    ordering_fields = ['id', 'created_at']
+    ordering = ['-created_at']
+
 class CamaraSeguridadViewSet(viewsets.ModelViewSet):
     queryset = CamaraSeguridad.objects.select_related('condominio')
     serializer_class = CamaraSeguridadSerializer
@@ -352,6 +428,26 @@ class CamaraSeguridadViewSet(viewsets.ModelViewSet):
     search_fields = ['nombre', 'ubicacion', 'tipo_camara']
 
 # ===================================
+# Logout (JWT) - registra en Bitácora
+# ===================================
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # Si mandas refresh desde el front, intentamos ponerlo en blacklist (opcional)
+        refresh = request.data.get("refresh")
+        if refresh:
+            try:
+                RefreshToken(refresh).blacklist()
+            except Exception:
+                # No interrumpimos el flujo si falla el blacklist
+                pass
+
+        # Registrar en Bitácora
+        log_bitacora(request, "logout", "Autenticación", "Cierre de sesión")
+
+        return Response(status=status.HTTP_205_RESET_CONTENT)
 # APIs PARA MOVIL - ACTUALIZADAS
 # ===================================
 
