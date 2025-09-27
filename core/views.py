@@ -13,7 +13,10 @@ from rest_framework import viewsets, filters
 
 from rest_framework.decorators import api_view, permission_classes, action
 from django.db.models import Prefetch
-from datetime import date, datetime, timedelta 
+from django.utils import timezone
+from datetime import date, datetime, timedelta
+
+from rest_framework.pagination import PageNumberPagination
 
 from .serializers import *
 from .models import *
@@ -282,9 +285,13 @@ class ReservaViewSet(viewsets.ModelViewSet):
         return queryset
 
 class CategoriaMantenimientoViewSet(viewsets.ModelViewSet):
-    queryset = CategoriaMantenimiento.objects.all()
+    queryset = CategoriaMantenimiento.objects.all().order_by('-id')
     serializer_class = CategoriaMantenimientoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['nombre', 'descripcion']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -298,6 +305,10 @@ class SolicitudMantenimientoViewSet(viewsets.ModelViewSet):
     queryset = SolicitudMantenimiento.objects.all()
     serializer_class = SolicitudMantenimientoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['titulo', 'descripcion', 'prioridad','estado']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -324,6 +335,10 @@ class TareaMantenimientoViewSet(viewsets.ModelViewSet):
     queryset = TareaMantenimiento.objects.all()
     serializer_class = TareaMantenimientoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['fecha_asignacion', 'fecha_completado', 'estado', 'solicitud_mantenimiento__titulo', 'usuario_asignado__nombre']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -347,6 +362,10 @@ class MantenimientoPreventivoViewSet(viewsets.ModelViewSet):
     queryset = MantenimientoPreventivo.objects.all()
     serializer_class = MantenimientoPreventivoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['descripcion', 'periodicidad_dias', 'ultima_ejecucion', 'proxima_ejecucion', 'categoria_mantenimiento__nombre', 'responsable__nombre', 'area_comun__nombre']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -361,65 +380,6 @@ class MantenimientoPreventivoViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(categoria_mantenimiento_id=categoria_id)
             
         return queryset
-
-# ===================================
-# APIs PARA MOVIL
-# ===================================
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def consultar_cuotas_servicios(request):
-    """
-    Consulta las facturas (cuotas y servicios) del usuario autenticado
-    """
-    try:
-        usuario = request.user
-        
-        if not hasattr(usuario, 'unidad_habitacional') or not usuario.unidad_habitacional:
-            return Response(
-                {"error": "No tiene unidad habitacional asignada"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        unidad = usuario.unidad_habitacional
-        
-        # Consultar facturas de los últimos 6 meses con pre-fetch de pagos
-        hoy = date.today()
-        # Manejar correctamente el cambio de año al restar meses
-        if hoy.month > 6:
-            seis_meses_atras = hoy.replace(month=hoy.month - 6)
-        else:
-            seis_meses_atras = hoy.replace(month=12 + (hoy.month - 6), year=hoy.year - 1)
-        
-        # Pre-cargar pagos para optimizar
-        facturas = Factura.objects.filter(
-            unidad_habitacional=unidad,
-            fecha_emision__gte=seis_meses_atras
-        ).select_related(
-            'concepto_cobro', 'unidad_habitacional'
-        ).prefetch_related(
-            Prefetch('pago_set', queryset=Pago.objects.filter(estado='completado'))
-        ).order_by('-fecha_emision', '-estado')
-        
-        # Agrupar por estado para facilitar el display en móvil
-        facturas_pendientes = facturas.filter(estado__in=['pendiente', 'vencida'])
-        facturas_pagadas = facturas.filter(estado='pagada')
-        
-        # Serializar
-        serializer = FacturaSerializer(facturas, many=True)
-        
-        return Response({
-            "pendientes": FacturaSerializer(facturas_pendientes, many=True).data,
-            "pagadas": FacturaSerializer(facturas_pagadas, many=True).data,
-            "total_pendiente": float(sum(f.monto for f in facturas_pendientes)),
-            "total_pagado": float(sum(f.monto for f in facturas_pagadas))
-        })
-    
-    except Exception as e:
-        return Response(
-            {"error": f"Error al consultar facturas: {str(e)}"},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
 
 # ===================================
 # IA Y SEGURIDAD - VIEWS
@@ -488,3 +448,838 @@ class LogoutView(APIView):
         log_bitacora(request, "logout", "Autenticación", "Cierre de sesión")
 
         return Response(status=status.HTTP_205_RESET_CONTENT)
+# APIs PARA MOVIL - ACTUALIZADAS
+# ===================================
+
+# Cuotas y Servicios
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def consultar_cuotas_servicios(request):
+    """
+    Consulta las facturas (cuotas y servicios) del usuario autenticado
+    VERSIÓN CORREGIDA - SIN RECURSIÓN
+    """
+    try:
+        usuario = request.user
+        
+        # Obtener las unidades habitacionales activas del usuario
+        unidades_usuario = UnidadHabitacional.objects.filter(
+            usuariounidad__usuario=usuario,
+            usuariounidad__fecha_fin__isnull=True
+        ).distinct()
+        
+        if not unidades_usuario.exists():
+            return Response(
+                {"error": "No tiene unidades habitacionales asignadas"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Consultar facturas de TODAS las unidades del usuario en los últimos 6 meses
+        hoy = date.today()
+        seis_meses_atras = hoy - timedelta(days=180)  # 6 meses aprox
+        
+        # Pre-cargar facturas de todas las unidades del usuario
+        facturas = Factura.objects.filter(
+            unidad_habitacional__in=unidades_usuario,
+            fecha_emision__gte=seis_meses_atras
+        ).select_related(
+            'concepto_cobro', 'unidad_habitacional', 'unidad_habitacional__condominio'
+        ).prefetch_related(
+            Prefetch('pago_set', queryset=Pago.objects.filter(estado='completado'))
+        ).order_by('-fecha_emision', '-estado')
+        
+        # Agrupar por estado para facilitar el display en móvil
+        facturas_pendientes = facturas.filter(estado__in=['pendiente', 'vencida'])
+        facturas_pagadas = facturas.filter(estado='pagada')
+        
+        # Calcular totales por unidad
+        resumen_unidades = []
+        for unidad in unidades_usuario:
+            facturas_unidad = facturas.filter(unidad_habitacional=unidad)
+            pendientes_unidad = facturas_unidad.filter(estado__in=['pendiente', 'vencida'])
+            pagadas_unidad = facturas_unidad.filter(estado='pagada')
+            
+            resumen_unidades.append({
+                "unidad_id": unidad.id,
+                "codigo": unidad.codigo,
+                "condominio": unidad.condominio.nombre,
+                "total_pendiente": float(sum(f.monto for f in pendientes_unidad)),
+                "total_pagado": float(sum(f.monto for f in pagadas_unidad)),
+                "cantidad_pendientes": pendientes_unidad.count(),
+                "cantidad_pagadas": pagadas_unidad.count()
+            })
+        
+        # USAR SERIALIZERS SIMPLIFICADOS PARA MÓVIL
+        return Response({
+            "resumen_unidades": resumen_unidades,
+            "facturas_pendientes": FacturaMovilSerializer(facturas_pendientes, many=True).data,
+            "facturas_pagadas": FacturaMovilSerializer(facturas_pagadas, many=True).data,
+            "total_general_pendiente": float(sum(f.monto for f in facturas_pendientes)),
+            "total_general_pagado": float(sum(f.monto for f in facturas_pagadas)),
+            "unidades_activas": [unidad.codigo for unidad in unidades_usuario]
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al consultar facturas: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def dashboard_movil(request):
+    """
+    Dashboard completo para la app móvil
+    """
+    try:
+        usuario = request.user
+        
+        # 1. Obtener unidades activas del usuario
+        unidades_activas = UnidadHabitacional.objects.filter(
+            usuariounidad__usuario=usuario,
+            usuariounidad__fecha_fin__isnull=True
+        ).distinct()
+        
+        if not unidades_activas.exists():
+            return Response(
+                {"error": "No tiene unidades habitacionales asignadas"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 2. Facturas pendientes de todas las unidades (últimos 3 meses)
+        tres_meses_atras = date.today() - timedelta(days=90)
+        facturas_pendientes = Factura.objects.filter(
+            unidad_habitacional__in=unidades_activas,
+            estado__in=['pendiente', 'vencida'],
+            fecha_emision__gte=tres_meses_atras
+        ).select_related('concepto_cobro', 'unidad_habitacional')[:10]
+        
+        # 3. Comunicados no leídos para las unidades del usuario (últimos 15 días)
+        quince_dias_atras = date.today() - timedelta(days=15)
+        comunicados_no_leidos = Comunicado.objects.filter(
+            comunicadounidad__unidad_habitacional__in=unidades_activas,
+            fecha_publicacion__gte=quince_dias_atras
+        ).exclude(
+            comunicadoleido__usuario=usuario
+        ).select_related('autor').distinct()[:5]
+        
+        # 4. Próximas reservas del usuario (próximos 30 días)
+        proximas_reservas = Reserva.objects.filter(
+            usuario=usuario,
+            fecha_reserva__gte=date.today(),
+            fecha_reserva__lte=date.today() + timedelta(days=30),
+            estado='confirmada'
+        ).select_related('area_comun')[:5]
+        
+        # 5. Notificaciones no leídas del usuario
+        notificaciones_no_leidas = Notificacion.objects.filter(
+            usuario=usuario,
+            leida=False
+        ).order_by('-fecha_envio')[:10]
+        
+        # 6. Solicitudes de mantenimiento abiertas del usuario
+        solicitudes_abiertas = SolicitudMantenimiento.objects.filter(
+            usuario_reporta=usuario,
+            estado__in=['pendiente', 'asignado', 'en_proceso']
+        ).select_related('categoria_mantenimiento')[:5]
+        
+        # 7. Resumen financiero
+        total_pendiente = Factura.objects.filter(
+            unidad_habitacional__in=unidades_activas,
+            estado__in=['pendiente', 'vencida']
+        ).aggregate(total=models.Sum('monto'))['total'] or 0
+        
+        # 8. Alertas de seguridad (con manejo de errores)
+        alertas_seguridad = []
+        try:
+            alertas = IncidenteSeguridad.objects.filter(
+                fecha_hora__gte=timezone.now() - timedelta(hours=24),
+                gravedad__in=['alta', 'media']
+            ).order_by('-fecha_hora')[:3]
+            alertas_seguridad = IncidenteSeguridadSerializer(alertas, many=True).data
+        except Exception as e:
+            # Si hay error, simplemente no mostrar alertas
+            alertas_seguridad = []
+        
+        return Response({
+            "usuario": {
+                "nombre": usuario.nombre,
+                "email": usuario.email,
+                "tipo": usuario.tipo,
+                "unidades_activas": [f"{u.codigo} - {u.condominio.nombre}" for u in unidades_activas]
+            },
+            "resumen_financiero": {
+                "total_pendiente": float(total_pendiente),
+                "facturas_pendientes_count": facturas_pendientes.count(),
+                "unidades_con_deuda": unidades_activas.filter(
+                    factura__estado__in=['pendiente', 'vencida']
+                ).distinct().count()
+            },
+            "facturas_pendientes": FacturaSerializer(facturas_pendientes, many=True).data,
+            "comunicados_no_leidos": ComunicadoSerializer(comunicados_no_leidos, many=True).data,
+            "proximas_reservas": ReservaSerializer(proximas_reservas, many=True).data,
+            "notificaciones": NotificacionSerializer(notificaciones_no_leidas, many=True).data,
+            "solicitudes_mantenimiento": SolicitudMantenimientoSerializer(solicitudes_abiertas, many=True).data,
+            "alertas_seguridad": alertas_seguridad
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al cargar dashboard: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+def obtener_alertas_seguridad(usuario, unidades_activas):
+    """Obtiene alertas de seguridad relevantes para el usuario"""
+    try:
+        # Incidentes recientes (últimas 24 horas) de gravedad media/alta
+        alertas = IncidenteSeguridad.objects.filter(
+            fecha_hora__gte=timezone.now() - timedelta(hours=24),
+            gravedad__in=['alta', 'media']
+        ).order_by('-fecha_hora')[:3]
+        
+        return IncidenteSeguridadSerializer(alertas, many=True).data
+    
+    except Exception as e:
+        return []
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def marcar_comunicado_leido(request, comunicado_id):
+    """Marca un comunicado como leído por el usuario"""
+    try:
+        comunicado = Comunicado.objects.get(id=comunicado_id)
+        
+        # Verificar que el comunicado está asignado a alguna unidad del usuario
+        unidades_usuario = UnidadHabitacional.objects.filter(
+            usuariounidad__usuario=request.user,
+            usuariounidad__fecha_fin__isnull=True
+        )
+        
+        if not ComunicadoUnidad.objects.filter(
+            comunicado=comunicado,
+            unidad_habitacional__in=unidades_usuario
+        ).exists():
+            return Response(
+                {"error": "No tiene permisos para leer este comunicado"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Crear registro de lectura
+        ComunicadoLeido.objects.get_or_create(
+            comunicado=comunicado,
+            usuario=request.user
+        )
+        
+        return Response({"message": "Comunicado marcado como leído"})
+    
+    except Comunicado.DoesNotExist:
+        return Response(
+            {"error": "Comunicado no encontrado"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def marcar_notificacion_leida(request, notificacion_id):
+    """Marca una notificación como leída"""
+    try:
+        notificacion = Notificacion.objects.get(id=notificacion_id, usuario=request.user)
+        notificacion.leida = True
+        notificacion.save()
+        
+        return Response({"message": "Notificación marcada como leída"})
+    
+    except Notificacion.DoesNotExist:
+        return Response(
+            {"error": "Notificación no encontrada"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+# ===================================
+# APIs PARA COMUNICADOS MÓVIL
+# ===================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def listar_comunicados_movil(request):
+    """
+    Lista comunicados para residente/inquilino en móvil
+    """
+    try:
+        usuario = request.user
+        
+        # Verificar que el usuario es residente o inquilino
+        if usuario.tipo not in ['residente', 'propietario']:
+            return Response(
+                {"error": "No tiene permisos para ver comunicados"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Obtener unidades activas del usuario
+        unidades_usuario = UnidadHabitacional.objects.filter(
+            usuariounidad__usuario=usuario,
+            usuariounidad__fecha_fin__isnull=True
+        ).distinct()
+        
+        if not unidades_usuario.exists():
+            return Response(
+                {"error": "No tiene unidades habitacionales asignadas"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Filtrar comunicados activos para las unidades del usuario
+        hoy = date.today()
+        comunicados = Comunicado.objects.filter(
+            # Comunicados asignados a las unidades del usuario
+            comunicadounidad__unidad_habitacional__in=unidades_usuario
+        ).filter(
+            # Comunicados no expirados (o sin fecha de expiración)
+            models.Q(fecha_expiracion__gte=hoy) | models.Q(fecha_expiracion__isnull=True)
+        ).filter(
+            # Solo comunicados publicados
+            fecha_publicacion__lte=timezone.now()
+        ).select_related('autor').prefetch_related(
+            Prefetch('comunicadoleido_set', queryset=ComunicadoLeido.objects.filter(usuario=usuario))
+        ).distinct().order_by('-fecha_publicacion', '-prioridad')
+        
+        # Aplicar filtros desde query parameters
+        prioridad = request.GET.get('prioridad')
+        if prioridad:
+            comunicados = comunicados.filter(prioridad=prioridad)
+            
+        tipo_destinatario = request.GET.get('destinatarios')
+        if tipo_destinatario:
+            comunicados = comunicados.filter(destinatarios=tipo_destinatario)
+        
+        # Paginación para móvil (CON IMPORT CORREGIDO)
+        paginator = PageNumberPagination()
+        paginator.page_size = 10
+        comunicados_paginados = paginator.paginate_queryset(comunicados, request)
+        
+        # Serializar con datos adicionales para móvil
+        comunicados_data = []
+        for comunicado in comunicados_paginados:
+            leido = ComunicadoLeido.objects.filter(
+                comunicado=comunicado, 
+                usuario=usuario
+            ).exists()
+            
+            comunicados_data.append({
+                'id': comunicado.id,
+                'titulo': comunicado.titulo,
+                'contenido_preview': comunicado.contenido[:100] + '...' if len(comunicado.contenido) > 100 else comunicado.contenido,
+                'fecha_publicacion': comunicado.fecha_publicacion,
+                'prioridad': comunicado.prioridad,
+                'prioridad_display': comunicado.get_prioridad_display(),
+                'autor_nombre': comunicado.autor.nombre if comunicado.autor else 'Administración',
+                'leido': leido,
+                'tiene_adjuntos': False,  # Puedes implementar adjuntos después
+                'obligatorio': comunicado.prioridad in ['alta', 'urgente']  # Regla de negocio
+            })
+        
+        return paginator.get_paginated_response({
+            'comunicados': comunicados_data,
+            'resumen': {
+                'total': comunicados.count(),
+                'no_leidos': comunicados.exclude(comunicadoleido__usuario=usuario).count(),
+                'urgentes': comunicados.filter(prioridad='urgente').count()
+            }
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener comunicados: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def detalle_comunicado_movil(request, comunicado_id):
+    """
+    Detalle completo de comunicado para móvil
+    """
+    try:
+        usuario = request.user
+        
+        # Obtener unidades activas del usuario
+        unidades_usuario = UnidadHabitacional.objects.filter(
+            usuariounidad__usuario=usuario,
+            usuariounidad__fecha_fin__isnull=True
+        ).distinct()
+        
+        # Verificar que el comunicado está asignado al usuario
+        comunicado = Comunicado.objects.filter(
+            id=comunicado_id,
+            comunicadounidad__unidad_habitacional__in=unidades_usuario
+        ).select_related('autor').first()
+        
+        if not comunicado:
+            return Response(
+                {"error": "Comunicado no encontrado o no tiene acceso"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verificar si está expirado
+        if comunicado.fecha_expiracion and comunicado.fecha_expiracion < date.today():
+            return Response(
+                {"error": "Este comunicado ha expirado"},
+                status=status.HTTP_410_GONE
+            )
+        
+        # Marcar como leído automáticamente al abrir (regla de negocio)
+        ComunicadoLeido.objects.get_or_create(
+            comunicado=comunicado,
+            usuario=usuario
+        )
+        
+        # Serializar datos completos
+        comunicado_data = {
+            'id': comunicado.id,
+            'titulo': comunicado.titulo,
+            'contenido_completo': comunicado.contenido,
+            'fecha_publicacion': comunicado.fecha_publicacion,
+            'fecha_expiracion': comunicado.fecha_expiracion,
+            'prioridad': comunicado.prioridad,
+            'prioridad_display': comunicado.get_prioridad_display(),
+            'destinatarios': comunicado.destinatarios,
+            'destinatarios_display': comunicado.get_destinatarios_display(),
+            'autor': {
+                'nombre': comunicado.autor.nombre if comunicado.autor else 'Administración',
+                'tipo': comunicado.autor.get_tipo_display() if comunicado.autor else 'Sistema'
+            },
+            'leido': True,  # Ya se marcó como leído
+            'obligatorio': comunicado.prioridad in ['alta', 'urgente'],
+            # Campos para futuros adjuntos
+            'adjuntos': [],
+            'permite_descarga': False
+        }
+        
+        return Response(comunicado_data)
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener comunicado: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['POST']) #no
+@permission_classes([IsAuthenticated])
+def confirmar_lectura_obligatoria(request, comunicado_id):
+    """
+    Opcional: Confirmar lectura de comunicados obligatorios
+    """
+    try:
+        usuario = request.user
+        
+        # Verificar que el comunicado existe y es obligatorio
+        comunicado = Comunicado.objects.filter(
+            id=comunicado_id,
+            prioridad__in=['alta', 'urgente']  # Comunicados obligatorios
+        ).first()
+        
+        if not comunicado:
+            return Response(
+                {"error": "Comunicado no encontrado o no es obligatorio"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verificar que el usuario tiene acceso al comunicado
+        unidades_usuario = UnidadHabitacional.objects.filter(
+            usuariounidad__usuario=usuario,
+            usuariounidad__fecha_fin__isnull=True
+        )
+        
+        if not ComunicadoUnidad.objects.filter(
+            comunicado=comunicado,
+            unidad_habitacional__in=unidades_usuario
+        ).exists():
+            return Response(
+                {"error": "No tiene acceso a este comunicado"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Marcar como leído con confirmación explícita
+        leido, created = ComunicadoLeido.objects.get_or_create(
+            comunicado=comunicado,
+            usuario=usuario
+        )
+        
+        # Registrar confirmación adicional (podrías agregar un campo de confirmación)
+        return Response({
+            "message": "Lectura confirmada exitosamente",
+            "comunicado_id": comunicado.id,
+            "titulo": comunicado.titulo,
+            "fecha_confirmacion": timezone.now()
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al confirmar lectura: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['GET']) #no
+@permission_classes([IsAuthenticated])
+def resumen_comunicados_movil(request):
+    """
+    Resumen rápido de comunicados para el dashboard móvil
+    """
+    try:
+        usuario = request.user
+        
+        # Obtener unidades activas del usuario
+        unidades_usuario = UnidadHabitacional.objects.filter(
+            usuariounidad__usuario=usuario,
+            usuariounidad__fecha_fin__isnull=True
+        ).distinct()
+        
+        if not unidades_usuario.exists():
+            return Response({"error": "No tiene unidades asignadas"}, status=400)
+        
+        hoy = date.today()
+        
+        # Comunicados activos no leídos (últimos 7 días)
+        comunicados_recientes = Comunicado.objects.filter(
+            comunicadounidad__unidad_habitacional__in=unidades_usuario,
+            fecha_publicacion__gte=hoy - timedelta(days=7)
+        ).filter(
+            models.Q(fecha_expiracion__gte=hoy) | models.Q(fecha_expiracion__isnull=True)
+        ).distinct()
+        
+        no_leidos = comunicados_recientes.exclude(comunicadoleido__usuario=usuario)
+        urgentes = comunicados_recientes.filter(prioridad='urgente')
+        
+        return Response({
+            'total_recientes': comunicados_recientes.count(),
+            'no_leidos': no_leidos.count(),
+            'urgentes': urgentes.count(),
+            'ultimo_comunicado': comunicados_recientes.first().fecha_publicacion if comunicados_recientes.exists() else None
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener resumen: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+# ===================================
+# APIs PARA NOTIFICACIONES MÓVIL - CU21
+# ===================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def listar_notificaciones_movil(request):
+    """
+    CU21: Lista notificaciones para el usuario en móvil
+    """
+    try:
+        usuario = request.user
+        
+        # Obtener notificaciones del usuario (últimos 30 días)
+        treinta_dias_atras = timezone.now() - timedelta(days=30)
+        
+        notificaciones = Notificacion.objects.filter(
+            usuario=usuario,
+            fecha_envio__gte=treinta_dias_atras
+        ).order_by('-fecha_envio', '-prioridad')
+        
+        # Aplicar filtros desde query parameters
+        tipo_notificacion = request.GET.get('tipo')
+        if tipo_notificacion:
+            notificaciones = notificaciones.filter(tipo=tipo_notificacion)
+            
+        solo_no_leidas = request.GET.get('no_leidas')
+        if solo_no_leidas and solo_no_leidas.lower() == 'true':
+            notificaciones = notificaciones.filter(leida=False)
+        
+        # Paginación para móvil
+        paginator = PageNumberPagination()
+        paginator.page_size = 15
+        notificaciones_paginadas = paginator.paginate_queryset(notificaciones, request)
+        
+        # Serializar para móvil
+        notificaciones_data = []
+        for notificacion in notificaciones_paginadas:
+            # Determinar acción según el tipo de notificación
+            accion = obtener_accion_notificacion(notificacion.tipo)
+            
+            notificaciones_data.append({
+                'id': notificacion.id,
+                'titulo': notificacion.titulo,
+                'mensaje': notificacion.mensaje,
+                'tipo': notificacion.tipo,
+                'tipo_display': notificacion.get_tipo_display(),
+                'prioridad': notificacion.prioridad,
+                'prioridad_display': notificacion.get_prioridad_display(),
+                'fecha_envio': notificacion.fecha_envio,
+                'leida': notificacion.leida,
+                'accion': accion,
+                'icono': obtener_icono_notificacion(notificacion.tipo),
+                'relacion_con_id': notificacion.relacion_con_id,
+                'tipo_relacion': notificacion.tipo_relacion
+            })
+        
+        return paginator.get_paginated_response({
+            'notificaciones': notificaciones_data,
+            'resumen': {
+                'total': notificaciones.count(),
+                'no_leidas': notificaciones.filter(leida=False).count(),
+                'urgentes': notificaciones.filter(prioridad='alta').count()
+            }
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener notificaciones: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def detalle_notificacion_movil(request, notificacion_id):
+    """
+    CU21: Detalle completo de notificación + marca como leída
+    """
+    try:
+        usuario = request.user
+        
+        # Obtener notificación específica del usuario
+        notificacion = Notificacion.objects.filter(
+            id=notificacion_id,
+            usuario=usuario
+        ).first()
+        
+        if not notificacion:
+            return Response(
+                {"error": "Notificación no encontrada"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Marcar como leída al abrir (regla de negocio)
+        if not notificacion.leida:
+            notificacion.leida = True
+            notificacion.save()
+        
+        # Obtener datos adicionales según el tipo de notificación
+        datos_adicionales = obtener_datos_adicionales(notificacion)
+        
+        notificacion_data = {
+            'id': notificacion.id,
+            'titulo': notificacion.titulo,
+            'mensaje': notificacion.mensaje,
+            'tipo': notificacion.tipo,
+            'tipo_display': notificacion.get_tipo_display(),
+            'prioridad': notificacion.prioridad,
+            'prioridad_display': notificacion.get_prioridad_display(),
+            'fecha_envio': notificacion.fecha_envio,
+            'leida': True,  # Ya se marcó como leída
+            'accion': obtener_accion_notificacion(notificacion.tipo),
+            'icono': obtener_icono_notificacion(notificacion.tipo),
+            'relacion_con_id': notificacion.relacion_con_id,
+            'tipo_relacion': notificacion.tipo_relacion,
+            'datos_adicionales': datos_adicionales
+        }
+        
+        return Response(notificacion_data)
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener notificación: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def marcar_notificacion_leida(request, notificacion_id):
+    """
+    CU21: Marcar notificación específica como leída
+    """
+    try:
+        usuario = request.user
+        
+        notificacion = Notificacion.objects.filter(
+            id=notificacion_id,
+            usuario=usuario
+        ).first()
+        
+        if not notificacion:
+            return Response(
+                {"error": "Notificación no encontrada"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if not notificacion.leida:
+            notificacion.leida = True
+            notificacion.save()
+        
+        return Response({
+            "message": "Notificación marcada como leída",
+            "notificacion_id": notificacion.id,
+            "titulo": notificacion.titulo
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al marcar notificación como leída: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def marcar_todas_leidas(request):
+    """
+    CU21: Marcar todas las notificaciones como leídas
+    """
+    try:
+        usuario = request.user
+        
+        notificaciones_no_leidas = Notificacion.objects.filter(
+            usuario=usuario,
+            leida=False
+        )
+        
+        cantidad_marcadas = notificaciones_no_leidas.count()
+        notificaciones_no_leidas.update(leida=True)
+        
+        return Response({
+            "message": f"{cantidad_marcadas} notificaciones marcadas como leídas",
+            "cantidad_marcadas": cantidad_marcadas
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al marcar notificaciones como leídas: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def actualizar_token_notificacion(request):
+    """
+    CU21: Actualizar token de notificación push del usuario
+    """
+    try:
+        usuario = request.user
+        token = request.data.get('token')
+        
+        if not token:
+            return Response(
+                {"error": "Token de notificación es requerido"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        usuario.token_notificacion = token
+        usuario.save()
+        
+        return Response({
+            "message": "Token de notificación actualizado exitosamente",
+            "usuario_id": usuario.id
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al actualizar token: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def resumen_notificaciones_movil(request):
+    """
+    CU21: Resumen rápido de notificaciones para el dashboard móvil
+    """
+    try:
+        usuario = request.user
+        
+        # Notificaciones de los últimos 7 días
+        siete_dias_atras = timezone.now() - timedelta(days=7)
+        
+        notificaciones_recientes = Notificacion.objects.filter(
+            usuario=usuario,
+            fecha_envio__gte=siete_dias_atras
+        )
+        
+        no_leidas = notificaciones_recientes.filter(leida=False)
+        urgentes = notificaciones_recientes.filter(prioridad='alta')
+        
+        # Contar por tipo
+        por_tipo = notificaciones_recientes.values('tipo').annotate(
+            total=models.Count('id'),
+            no_leidas=models.Count('id', filter=models.Q(leida=False))
+        )
+        
+        return Response({
+            'total_recientes': notificaciones_recientes.count(),
+            'no_leidas': no_leidas.count(),
+            'urgentes': urgentes.count(),
+            'por_tipo': list(por_tipo),
+            'ultima_notificacion': notificaciones_recientes.first().fecha_envio if notificaciones_recientes.exists() else None
+        })
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener resumen: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+# ===================================
+# MÉTODOS AUXILIARES PARA NOTIFICACIONES
+# ===================================
+
+def obtener_accion_notificacion(tipo_notificacion):
+    """Determina la acción a realizar según el tipo de notificación"""
+    acciones = {
+        'pago': {'texto': 'Ver detalles de pago', 'ruta': '/finanzas/pagos'},
+        'seguridad': {'texto': 'Ver incidente', 'ruta': '/seguridad/incidentes'},
+        'reserva': {'texto': 'Ver reserva', 'ruta': '/reservas/detalle'},
+        'comunicado': {'texto': 'Leer comunicado', 'ruta': '/comunicados/detalle'},
+        'mantenimiento': {'texto': 'Ver solicitud', 'ruta': '/mantenimiento/solicitudes'},
+        'sistema': {'texto': 'Ver detalles', 'ruta': '/sistema'}
+    }
+    return acciones.get(tipo_notificacion, {'texto': 'Ver detalles', 'ruta': '/'})
+
+def obtener_icono_notificacion(tipo_notificacion):
+    """Retorna el nombre del icono según el tipo de notificación"""
+    iconos = {
+        'pago': '💰',
+        'seguridad': '🚨',
+        'reserva': '📅',
+        'comunicado': '📢',
+        'mantenimiento': '🔧',
+        'sistema': '⚙️'
+    }
+    return iconos.get(tipo_notificacion, '🔔')
+
+def obtener_datos_adicionales(notificacion):
+    """Obtiene datos adicionales según el tipo de notificación"""
+    if not notificacion.relacion_con_id or not notificacion.tipo_relacion:
+        return {}
+    
+    try:
+        if notificacion.tipo_relacion == 'factura':
+            factura = Factura.objects.filter(id=notificacion.relacion_con_id).first()
+            if factura:
+                return {
+                    'monto': float(factura.monto),
+                    'fecha_vencimiento': factura.fecha_vencimiento,
+                    'estado': factura.estado
+                }
+        
+        elif notificacion.tipo_relacion == 'incidente':
+            incidente = IncidenteSeguridad.objects.filter(id=notificacion.relacion_con_id).first()
+            if incidente:
+                return {
+                    'tipo_incidente': incidente.get_tipo_display(),
+                    'gravedad': incidente.gravedad,
+                    'ubicacion': incidente.ubicacion
+                }
+        
+        # Agregar más casos según necesites
+        
+    except Exception:
+        # Si hay error, retornar objeto vacío
+        pass
+    
+    return {}
