@@ -23,9 +23,58 @@ from .models import *
 def get_client_ip(request):
     xff = request.META.get("HTTP_X_FORWARDED_FOR")
     return xff.split(",")[0].strip() if xff else request.META.get("REMOTE_ADDR")
+
+# Helper para formar un texto amigable de la entidad
+def display_obj(obj):
+    # intenta campos comunes
+    for attr in ("nombre", "titulo", "codigo", "descripcion"):
+        if hasattr(obj, attr):
+            val = getattr(obj, attr)
+            if val:
+                return str(val)
+    # fallback por id
+    if hasattr(obj, "id"):
+        return f"ID {obj.id}"
+    return str(obj)
+
+# Helper central para registrar en Bitácora
+def log_bitacora(request, accion, modulo, detalles=""):
+    try:
+        Bitacora.objects.create(
+            usuario=getattr(request, "user", None),
+            accion=str(accion),
+            modulo=str(modulo),
+            detalles=str(detalles),
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", "")
+        )
+    except Exception:
+        # nunca rompemos el flujo por fallar la bitácora
+        pass
 # -------------------------------------------------------------------
 
-class UsuarioViewSet(ModelViewSet):
+# Mixin reutilizable para CRUD (create/update/destroy)
+class BitacoraCRUDMixin:
+    bitacora_modulo = "General"
+
+    def perform_create(self, serializer):
+        obj = serializer.save()
+        detalles = f"Creó {display_obj(obj)} (id={getattr(obj, 'id', '-')})"
+        log_bitacora(self.request, "crear", self.bitacora_modulo, detalles)
+
+    def perform_update(self, serializer):
+        obj = serializer.save()
+        detalles = f"Editó {display_obj(obj)} (id={getattr(obj, 'id', '-')})"
+        log_bitacora(self.request, "editar", self.bitacora_modulo, detalles)
+
+    def perform_destroy(self, instance):
+        detalles = f"Eliminó {display_obj(instance)} (id={getattr(instance, 'id', '-')})"
+        log_bitacora(self.request, "eliminar", self.bitacora_modulo, detalles)
+        instance.delete()
+# -------------------------------------------------------------------
+
+class UsuarioViewSet(BitacoraCRUDMixin, ModelViewSet):
+    bitacora_modulo = "Usuarios"
     queryset = Usuario.objects.all().order_by('-id')
     permission_classes = [IsAuthenticated]
 
@@ -56,18 +105,7 @@ class LoginView(APIView):
         refresh = RefreshToken.for_user(user)
 
         # >>> Registro en Bitácora (login exitoso) <<<
-        try:
-            Bitacora.objects.create(
-                usuario=user,
-                accion="login_exitoso",
-                modulo="Autenticación",
-                detalles="Inicio de sesión vía /auth/login",
-                ip_address=get_client_ip(request),
-                user_agent=request.META.get("HTTP_USER_AGENT", "")
-            )
-        except Exception:
-            # No rompemos el login si por alguna razón falla la bitácora
-            pass
+        log_bitacora(request, "login_exitoso", "Autenticación", "Inicio de sesión vía /auth/login")
 
         return Response({
             'access': str(refresh.access_token),
@@ -75,7 +113,8 @@ class LoginView(APIView):
             'usuario': UsuarioLoginSerializer(user).data
         })
 
-class CondominioViewSet(ModelViewSet):
+class CondominioViewSet(BitacoraCRUDMixin, ModelViewSet):
+    bitacora_modulo = "Condominios"
     queryset = Condominio.objects.all()
     serializer_class = CondominioSerializer
     permission_classes = [IsAuthenticated]
@@ -86,7 +125,8 @@ class CondominioViewSet(ModelViewSet):
         serializer = self.get_serializer(condominios, many=True)
         return Response(serializer.data)
 
-class UnidadHabitacionalViewSet(ModelViewSet):
+class UnidadHabitacionalViewSet(BitacoraCRUDMixin, ModelViewSet):
+    bitacora_modulo = "Unidades"
     queryset = UnidadHabitacional.objects.all()
     serializer_class = UnidadHabitacionalSerializer
     permission_classes = [IsAuthenticated]
@@ -195,10 +235,11 @@ class NotificacionViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['titulo', 'mensaje', 'tipo', 'prioridad']
-    ordering_fields = ['fecha_envio', 'prioridad', 'enviada', 'leida']
+    ordering_fields = ['fecha_envio', 'prioridad', 'enviada', 'es_leida']
 
 
-class AreaComunViewSet(viewsets.ModelViewSet):
+class AreaComunViewSet(BitacoraCRUDMixin, viewsets.ModelViewSet):
+    bitacora_modulo = "Áreas Comunes"
     queryset = AreaComun.objects.all().order_by('-id')
     serializer_class = AreaComunSerializer
     permission_classes = [IsAuthenticated]
@@ -444,16 +485,6 @@ class LogoutView(APIView):
                 pass
 
         # Registrar en Bitácora
-        try:
-            Bitacora.objects.create(
-                usuario=request.user,
-                accion="logout",
-                modulo="Autenticación",
-                detalles="Cierre de sesión",
-                ip_address=get_client_ip(request),
-                user_agent=request.META.get("HTTP_USER_AGENT", "")
-            )
-        except Exception:
-            pass
+        log_bitacora(request, "logout", "Autenticación", "Cierre de sesión")
 
         return Response(status=status.HTTP_205_RESET_CONTENT)
