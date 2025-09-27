@@ -234,9 +234,13 @@ class ReservaViewSet(viewsets.ModelViewSet):
         return queryset
 
 class CategoriaMantenimientoViewSet(viewsets.ModelViewSet):
-    queryset = CategoriaMantenimiento.objects.all()
+    queryset = CategoriaMantenimiento.objects.all().order_by('-id')
     serializer_class = CategoriaMantenimientoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['nombre', 'descripcion']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -250,6 +254,10 @@ class SolicitudMantenimientoViewSet(viewsets.ModelViewSet):
     queryset = SolicitudMantenimiento.objects.all()
     serializer_class = SolicitudMantenimientoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['titulo', 'descripcion', 'prioridad','estado']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -276,6 +284,10 @@ class TareaMantenimientoViewSet(viewsets.ModelViewSet):
     queryset = TareaMantenimiento.objects.all()
     serializer_class = TareaMantenimientoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['fecha_asignacion', 'fecha_completado', 'estado', 'solicitud_mantenimiento__titulo', 'usuario_asignado__nombre']
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -299,6 +311,10 @@ class MantenimientoPreventivoViewSet(viewsets.ModelViewSet):
     queryset = MantenimientoPreventivo.objects.all()
     serializer_class = MantenimientoPreventivoSerializer
     permission_classes = [IsAuthenticated]
+    
+    # Habilitar filtro de búsqueda
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['descripcion', 'periodicidad_dias', 'ultima_ejecucion', 'proxima_ejecucion', 'categoria_mantenimiento__nombre', 'responsable__nombre', 'area_comun__nombre']
 
     def get_queryset(self):
         queryset = super().get_queryset()
