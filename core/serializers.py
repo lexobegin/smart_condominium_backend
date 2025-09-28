@@ -32,6 +32,11 @@ class UnidadHabitacionalSerializer(serializers.ModelSerializer):
         rep['condominio'] = CondominioSerializer(instance.condominio).data
         return rep
 
+class UnidadHabitacionalSelectSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UnidadHabitacional
+        fields = ['id', 'codigo', 'tipo']
+
 # ===============================
 # SERIALIZERS BÁSICOS (Evitar dependencias circulares)
 # ===============================
@@ -109,6 +114,11 @@ class UsuarioSerializer(serializers.ModelSerializer):
         model = Usuario
         exclude = ['password']
         read_only_fields = ['email', 'fecha_registro', 'is_active', 'is_staff']
+
+class UsuarioSelectSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = ['id', 'nombre', 'apellidos', 'tipo']
 
 class UsuarioRegistroSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, min_length=6)
@@ -366,6 +376,11 @@ class MantenimientoPreventivoSerializer(serializers.ModelSerializer):
 class VehiculoSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer(read_only=True)
     
+    class Meta:
+        model = Vehiculo
+        fields = '__all__'
+
+class VehiculoSelectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Vehiculo
         fields = '__all__'

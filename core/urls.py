@@ -52,7 +52,10 @@ urlpatterns = [
     # Nueva ruta para gestión de unidades por usuario
     path('usuarios/<int:usuario_id>/unidades/', gestionar_unidades_usuario, name='gestionar-unidades-usuario'),
 
-    # Autenticación
+    # Dashboard Admin
+    path('admin/dashboard/', dashboard_admin, name='admin_dashboard'),
+
+    # Autenticación MÓVIL
     path('auth/login/', LoginView.as_view(), name='login'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
 

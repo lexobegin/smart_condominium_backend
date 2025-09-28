@@ -1,19 +1,21 @@
 from django.shortcuts import render
 from rest_framework.viewsets import ModelViewSet
 
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken  # si usas JWT
 
 from rest_framework import viewsets, filters
 
 from rest_framework.decorators import api_view, permission_classes, action
-from django.db.models import Prefetch, Sum, Count
+
+from django.db.models import Prefetch, Count, Sum, Case, When, DecimalField, F
 from django.db.models.functions import TruncMonth
+
 from django.utils import timezone
 from datetime import date, datetime, timedelta
 
@@ -86,6 +88,44 @@ class UsuarioViewSet(BitacoraCRUDMixin, ModelViewSet):
         if self.action in ['create']:
             return UsuarioRegistroSerializer
         return UsuarioSerializer
+    
+    # Trae todos
+    """@action(detail=False, methods=['get'], url_path='todos')
+    def listar_todos(self, request):
+        unidades = self.get_queryset()
+        serializer = UsuarioSelectSerializer(unidades, many=True)
+        return Response(serializer.data)"""
+    
+    # Filtrado por tipo (ej. residentes) //GET /api/usuarios/todos/?tipo=residente
+    """@action(detail=False, methods=['get'], url_path='todos')
+    def listar_todos(self, request):
+        tipo = request.query_params.get('tipo')  # obtener ?tipo=valor
+        queryset = self.get_queryset()
+        
+        if tipo:
+            queryset = queryset.filter(tipo=tipo)
+        
+        serializer = UsuarioSelectSerializer(queryset, many=True)
+        return Response(serializer.data)"""
+    
+    # Filtrar por múltiples tipos //GET /api/usuarios/todos/?tipo=administrador,seguridad
+    @action(detail=False, methods=['get'], url_path='todos')
+    def listar_todos(self, request):
+        tipo_param = request.query_params.get('tipo')  # puede ser "residente" o "residente,administrador"
+        queryset = self.get_queryset()
+
+        if tipo_param:
+            tipos = [t.strip() for t in tipo_param.split(',') if t.strip()]
+            tipos_validos = dict(Usuario.TIPO_CHOICES).keys()
+            tipos_filtrados = [t for t in tipos if t in tipos_validos]
+
+            if not tipos_filtrados:
+                return Response({"error": "Ningún tipo de usuario válido fue proporcionado."}, status=400)
+
+            queryset = queryset.filter(tipo__in=tipos_filtrados)
+
+        serializer = UsuarioSelectSerializer(queryset, many=True)
+        return Response(serializer.data)
 
 class LoginView(APIView):
     def post(self, request):
@@ -131,6 +171,12 @@ class UnidadHabitacionalViewSet(BitacoraCRUDMixin, ModelViewSet):
     queryset = UnidadHabitacional.objects.all()
     serializer_class = UnidadHabitacionalSerializer
     permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=['get'], url_path='todos')
+    def listar_todos(self, request):
+        unidades = self.get_queryset()
+        serializer = UnidadHabitacionalSelectSerializer(unidades, many=True)
+        return Response(serializer.data)
 
 class UsuarioUnidadViewSet(viewsets.ModelViewSet):
     queryset = UsuarioUnidad.objects.select_related('usuario', 'unidad', 'unidad__condominio')
@@ -556,6 +602,16 @@ class VehiculoViewSet(viewsets.ModelViewSet):
     serializer_class = VehiculoSerializer
     permission_classes = [IsAuthenticated]
 
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['placa', 'modelo', 'usuario__nombre']
+
+    # Trae todos
+    @action(detail=False, methods=['get'], url_path='todos')
+    def listar_todos(self, request):
+        unidades = self.get_queryset()
+        serializer = VehiculoSelectSerializer(unidades, many=True)
+        return Response(serializer.data)
+
 class RegistroAccesoViewSet(viewsets.ModelViewSet):
     queryset = RegistroAcceso.objects.select_related('usuario', 'vehiculo').order_by('-fecha_hora')
     serializer_class = RegistroAccesoSerializer
@@ -565,6 +621,9 @@ class VisitanteViewSet(viewsets.ModelViewSet):
     queryset = Visitante.objects.select_related('anfitrion').order_by('-fecha_entrada')
     serializer_class = VisitanteSerializer
     permission_classes = [IsAuthenticated]
+
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['nombre', 'documento_identidad', 'telefono']
 
 class IncidenteSeguridadViewSet(viewsets.ModelViewSet):
     queryset = IncidenteSeguridad.objects.select_related('usuario_reporta', 'usuario_asignado').order_by('-fecha_hora')
@@ -1449,3 +1508,50 @@ def obtener_datos_adicionales(notificacion):
         pass
     
     return {}
+
+# ===================================
+# DASHBOARD PARA EL ADMINISTRADOR
+# ===================================
+User = get_user_model()
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def dashboard_admin(request):
+    try:
+        # Usuarios por tipo
+        usuarios_por_tipo = User.objects.values('tipo').annotate(total=Count('id'))
+
+        # Usuarios por condominio y tipo (desde UsuarioUnidad)
+        usuarios_condominio_tipo = UsuarioUnidad.objects.filter(
+            fecha_fin__isnull=True
+        ).values(
+            condominio_nombre=F('unidad__condominio__nombre'),
+            tipo_usuario=F('usuario__tipo')
+        ).annotate(total=Count('usuario')).order_by('condominio_nombre', 'tipo_usuario')
+
+        # Resumen de facturas por condominio (desde Factura)
+        resumen_facturacion = Factura.objects.values(
+            condominio_nombre=F('unidad_habitacional__condominio__nombre')
+        ).annotate(
+            total_facturado=Sum('monto'),
+            total_pagado=Sum('pago__monto'),  # asumiendo relación inversa desde Pago
+            total_pendiente=Sum(
+                Case(
+                    When(estado='pendiente', then='monto'),
+                    default=0,
+                    output_field=DecimalField()
+                )
+            )
+        ).order_by('condominio_nombre')
+
+        return Response({
+            'usuarios_por_tipo': list(usuarios_por_tipo),
+            'usuarios_por_condominio_y_tipo': list(usuarios_condominio_tipo),
+            'facturacion_por_condominio': list(resumen_facturacion)
+        })
+
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener dashboard: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
