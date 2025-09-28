@@ -1,8 +1,8 @@
-# core_url.py
+# core/urls.py
 
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import *  # Incluye LoginView y LogoutView
+from .views import *  # Incluye LoginView, LogoutView y los nuevos endpoints de reportes
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -59,9 +59,13 @@ urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='login'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
 
+    # === NUEVOS ENDPOINTS DE REPORTES ===
+    path('reportes/financieros/', IndicadoresFinancierosView.as_view(), name='indicadores-financieros'),
+    path('reportes/areas-comunes/', ReporteAreasComunesView.as_view(), name='reporte-areas-comunes'),
+    path('reportes/visuales/', ReporteVisualesView.as_view(), name='reporte-visuales'),
+
     # Endpoints MÓVIL
     path('movil/dashboard/', dashboard_movil, name='movil_dashboard'),
-
     path('movil/cuotas-servicios/', consultar_cuotas_servicios, name='movil_consultar_cuotas'),
 
     # COMUNICADOS MÓVIL
