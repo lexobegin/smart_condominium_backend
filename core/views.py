@@ -12,7 +12,8 @@ from rest_framework_simplejwt.tokens import RefreshToken  # si usas JWT
 from rest_framework import viewsets, filters
 
 from rest_framework.decorators import api_view, permission_classes, action
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Sum, Count
+from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from datetime import date, datetime, timedelta
 
@@ -29,13 +30,11 @@ def get_client_ip(request):
 
 # Helper para formar un texto amigable de la entidad
 def display_obj(obj):
-    # intenta campos comunes
     for attr in ("nombre", "titulo", "codigo", "descripcion"):
         if hasattr(obj, attr):
             val = getattr(obj, attr)
             if val:
                 return str(val)
-    # fallback por id
     if hasattr(obj, "id"):
         return f"ID {obj.id}"
     return str(obj)
@@ -52,7 +51,6 @@ def log_bitacora(request, accion, modulo, detalles=""):
             user_agent=request.META.get("HTTP_USER_AGENT", "")
         )
     except Exception:
-        # nunca rompemos el flujo por fallar la bitácora
         pass
 # -------------------------------------------------------------------
 
@@ -195,6 +193,174 @@ class PagoViewSet(ModelViewSet):
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['referencia_pago', 'estado', 'metodo_pago']
     ordering_fields = ['fecha_pago', 'monto']
+
+
+class IndicadoresFinancierosView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            total_facturas = Factura.objects.count()
+            pendientes = Factura.objects.filter(estado="pendiente").count()
+            vencidas = Factura.objects.filter(estado="vencida").count()
+            morosidad = (pendientes + vencidas) / total_facturas * 100 if total_facturas > 0 else 0
+
+            ingresos_total = Pago.objects.filter(estado="completado").aggregate(total=Sum("monto"))["total"] or 0
+            ingresos_mes = Pago.objects.filter(
+                estado="completado",
+                fecha_pago__gte=date.today().replace(day=1)
+            ).aggregate(total=Sum("monto"))["total"] or 0
+
+            pagos_estado = Pago.objects.values("estado").annotate(total=Count("id"))
+
+            return Response({
+                "morosidad": {
+                    "total_facturas": total_facturas,
+                    "pendientes": pendientes,
+                    "vencidas": vencidas,
+                    "porcentaje_morosidad": round(morosidad, 2)
+                },
+                "ingresos": {
+                    "total": float(ingresos_total),
+                    "ultimo_mes": float(ingresos_mes)
+                },
+                "pagos": {p["estado"]: p["total"] for p in pagos_estado}
+            })
+        except Exception as e:
+            return Response(
+                {"error": f"Error al generar indicadores: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# ===================================
+# REPORTES - ÁREAS COMUNES
+# ===================================
+
+class ReporteAreasComunesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            condominio_id = request.query_params.get("condominio_id")
+            areas = AreaComun.objects.all()
+
+            if condominio_id:
+                areas = areas.filter(condominio_id=condominio_id)
+
+            resumen_areas = []
+            total_reservas = 0
+            total_ingresos = 0
+
+            for area in areas:
+                reservas = Reserva.objects.filter(area_comun=area)
+                total_area = reservas.count()
+                ingresos_area = reservas.aggregate(total=Sum("monto_total"))["total"] or 0
+                pendientes = reservas.filter(estado="pendiente").count()
+                confirmadas = reservas.filter(estado="confirmada").count()
+                completadas = reservas.filter(estado="completada").count()
+                canceladas = reservas.filter(estado="cancelada").count()
+
+                resumen_areas.append({
+                    "id": area.id,
+                    "nombre": area.nombre,
+                    "total_reservas": total_area,
+                    "ingresos": float(ingresos_area),
+                    "reservas_pendientes": pendientes,
+                    "reservas_confirmadas": confirmadas,
+                    "reservas_completadas": completadas,
+                    "reservas_canceladas": canceladas
+                })
+
+                total_reservas += total_area
+                total_ingresos += ingresos_area
+
+            return Response({
+                "resumen": {
+                    "total_reservas": total_reservas,
+                    "total_ingresos": float(total_ingresos)
+                },
+                "areas": resumen_areas
+            })
+        except Exception as e:
+            return Response(
+                {"error": f"Error al generar reporte de áreas comunes: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+# ===================================
+# REPORTES - VISUALES
+# ===================================
+
+class ReporteVisualesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            hoy = date.today()
+            hace_12_meses = hoy - timedelta(days=365)
+            hace_6_meses = hoy - timedelta(days=180)
+
+            # === INGRESOS MENSUALES ===
+            pagos = (
+                Pago.objects.filter(estado="completado", fecha_pago__gte=hace_12_meses)
+                .annotate(mes=TruncMonth("fecha_pago"))
+                .values("mes")
+                .annotate(total=Sum("monto"))
+                .order_by("mes")
+            )
+            ingresos_mensuales = [
+                {"mes": p["mes"].strftime("%Y-%m"), "total": float(p["total"] or 0)}
+                for p in pagos if p["mes"]
+            ]
+
+            # === MOROSIDAD MENSUAL ===
+            facturas = (
+                Factura.objects.filter(fecha_vencimiento__gte=hace_12_meses)
+                .annotate(mes=TruncMonth("fecha_vencimiento"))
+                .values("mes", "estado")
+                .annotate(total=Count("id"))
+                .order_by("mes")
+            )
+            morosidad_dict = {}
+            for f in facturas:
+                mes = f["mes"].strftime("%Y-%m") if f["mes"] else "N/A"
+                if mes not in morosidad_dict:
+                    morosidad_dict[mes] = {"pendientes": 0, "vencidas": 0}
+                if f["estado"] == "pendiente":
+                    morosidad_dict[mes]["pendientes"] = f["total"]
+                elif f["estado"] == "vencida":
+                    morosidad_dict[mes]["vencidas"] = f["total"]
+
+            morosidad_mensual = [
+                {"mes": mes, **valores} for mes, valores in morosidad_dict.items()
+            ]
+
+            # === RESERVAS POR ÁREA ===
+            reservas = (
+                Reserva.objects.filter(
+                    fecha_reserva__gte=hace_6_meses,
+                    estado__in=["confirmada", "completada"]
+                )
+                .values("area_comun__nombre")
+                .annotate(total=Count("id"))
+                .order_by("-total")
+            )
+            reservas_por_area = [
+                {"area": r["area_comun__nombre"] or "Sin nombre", "total": r["total"]}
+                for r in reservas
+            ]
+
+            return Response({
+                "ingresos_mensuales": ingresos_mensuales,
+                "morosidad_mensual": morosidad_mensual,
+                "reservas_por_area": reservas_por_area
+            })
+        except Exception as e:
+            return Response(
+                {"error": f"Error al generar reportes visuales: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # ===================================
 # COMUNICACIÓN
