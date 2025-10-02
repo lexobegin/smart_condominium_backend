@@ -9,6 +9,22 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
+import os
+# ===================================
+# RECONOCIMIENTO FACIAL - CONFIGURACIÓN
+# ===================================
+
+# Google Vision API Configuration
+GOOGLE_VISION_CREDENTIALS = os.getenv('GOOGLE_VISION_CREDENTIALS', '')
+GOOGLE_VISION_PROJECT = os.getenv('GOOGLE_VISION_PROJECT', 'smart-condominio-project')
+
+# Configuración de reconocimiento facial
+FACE_RECOGNITION_BACKEND = os.getenv('FACE_RECOGNITION_BACKEND', 'deepface')  # 'google' or 'deepface'
+FACE_MATCH_THRESHOLD = 0.7  # Umbral de confianza para coincidencia
+
+# DeepFace Configuration
+DEEPFACE_MODEL = 'Facenet'
+DEEPFACE_DETECTOR = 'opencv'
 
 from pathlib import Path
 
