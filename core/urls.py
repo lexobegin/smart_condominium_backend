@@ -82,4 +82,9 @@ urlpatterns = [
     path('movil/notificaciones/leer-todas/', marcar_todas_leidas, name='movil_notificaciones_leer_todas'),
     path('movil/notificaciones/actualizar-token/', actualizar_token_notificacion, name='movil_notificaciones_actualizar_token'),
     path('movil/notificaciones/resumen/', resumen_notificaciones_movil, name='movil_notificaciones_resumen'),
+
+    # RECONOCIMIENTO FACIAL
+    path('ia/registrar-rostro/<int:usuario_id>/', registrar_rostro_usuario, name='registrar_rostro'),
+    path('ia/procesar-acceso/', procesar_acceso_facial, name='procesar_acceso_facial'),
+    path('ia/estadisticas-acceso/', obtener_estadisticas_acceso, name='estadisticas_acceso'),
 ]
